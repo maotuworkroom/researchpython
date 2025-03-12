@@ -59,51 +59,96 @@ def search_yandex(keywords):
             links.append(href)
     return links
 
-def get_links(keywords):
+def search_academic(keywords):
+    results = []
+
+    # 百度学术搜索
+    try:
+        headers = {'User-Agent': UserAgent().random}
+        response = requests.get(f'https://xueshu.baidu.com/s?wd={keywords}', headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for item in soup.find_all('a'):
+            href = item.get('href')
+            if href and href.startswith(('http://', 'https://')):
+                results.append(href)
+    except Exception as e:
+        print(f"[INFO] Baidu Academic search failed: {e}")
+
+    # 必应学术搜索
+    try:
+        headers = {'User-Agent': UserAgent().random}
+        response = requests.get(f'https://www.bing.com/academic?q={keywords}', headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for item in soup.find_all('a'):
+            href = item.get('href')
+            if href and href.startswith(('http://', 'https://')):
+                results.append(href)
+    except Exception as e:
+        print(f"[INFO] Bing Academic search failed: {e}")
+
+    # 谷歌学术搜索
+    try:
+        headers = {'User-Agent': UserAgent().random}
+        response = requests.get(f'https://scholar.google.com/scholar?q={keywords}', headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for item in soup.find_all('a'):
+            href = item.get('href')
+            if href and href.startswith(('http://', 'https://')):
+                results.append(href)
+    except Exception as e:
+        print(f"[INFO] Google Scholar search failed: {e}")
+
+    return results
+
+def get_links(keywords, academic=False):
     try:
         results = []
         
-        # Google Search
-        try:
-            for result in search(keywords):
-                if result.startswith(('http://', 'https://')):
-                    results.append(result)
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Google search failed: {e}")
+        if academic:
+            # 使用学术搜索
+            results.extend(search_academic(keywords))
+        else:
+            # Google Search
+            try:
+                for result in search(keywords):
+                    if result.startswith(('http://', 'https://')):
+                        results.append(result)
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Google search failed: {e}")
 
-        # Baidu Search
-        try:
-            results.extend(search_baidu(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Baidu search failed: {e}")
+            # Baidu Search
+            try:
+                results.extend(search_baidu(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Baidu search failed: {e}")
 
-        # DuckDuckGo Search
-        try:
-            results.extend(search_duckduckgo(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] DuckDuckGo search failed: {e}")
+            # DuckDuckGo Search
+            try:
+                results.extend(search_duckduckgo(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] DuckDuckGo search failed: {e}")
 
-        # Bing Search
-        try:
-            results.extend(search_bing(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Bing search failed: {e}")
+            # Bing Search
+            try:
+                results.extend(search_bing(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Bing search failed: {e}")
 
-        # Yandex Search
-        try:
-            results.extend(search_yandex(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Yandex search failed: {e}")
+            # Yandex Search
+            try:
+                results.extend(search_yandex(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Yandex search failed: {e}")
 
         return results
     except requests.exceptions.HTTPError as e:
@@ -156,6 +201,7 @@ import json
 
 class RequestHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
+
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Content-type', 'application/json')
@@ -166,7 +212,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
             query_params = urllib.parse.parse_qs(parsed_path.query)
             
             keywords = query_params.get('keywords', [''])[0]
-            links = get_links(keywords)
+            academic = query_params.get('academic', [False])[0]
+            links = get_links(keywords, academic)
             
             if isinstance(links, dict) and 'result' in links and links['result'] == 429:
                 self.wfile.write(json.dumps(links).encode())
@@ -202,28 +249,6 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     })
 
             self.wfile.write(json.dumps({'results': texts}).encode())
-
-        # 新增测试端点
-        elif self.path.startswith('/test_bing'):
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_path.query)
-            keywords = query_params.get('keywords', [''])[0]
-            links = search_bing(keywords)
-            self.wfile.write(json.dumps({'result': links}).encode())
-
-        elif self.path.startswith('/test_nw'):
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_path.query)
-            keywords = query_params.get('keywords', [''])[0]
-            links = search_duckduckgo(keywords)
-            self.wfile.write(json.dumps({'result': links}).encode())
-
-        elif self.path.startswith('/test_xinu'):
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_path.query)
-            keywords = query_params.get('keywords', [''])[0]
-            links = search_baidu(keywords)
-            self.wfile.write(json.dumps({'result': links}).encode())
 
         else:
             super().do_GET()
