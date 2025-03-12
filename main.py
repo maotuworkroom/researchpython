@@ -62,7 +62,7 @@ def get_links(keywords):
                 return results
         except Exception as e:
             print(f"[INFO] Google search failed: {e}")
-        
+
         # Baidu Search
         try:
             results.extend(search_baidu(keywords))
@@ -70,15 +70,7 @@ def get_links(keywords):
                 return results
         except Exception as e:
             print(f"[INFO] Baidu search failed: {e}")
-        
-        # Bing Search
-        try:
-            results.extend(search_bing(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Bing search failed: {e}")
-        
+
         # DuckDuckGo Search
         try:
             results.extend(search_duckduckgo(keywords))
@@ -86,7 +78,15 @@ def get_links(keywords):
                 return results
         except Exception as e:
             print(f"[INFO] DuckDuckGo search failed: {e}")
-        
+
+        # Bing Search
+        try:
+            results.extend(search_bing(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Bing search failed: {e}")
+
         # Yandex Search
         try:
             results.extend(search_yandex(keywords))
@@ -94,7 +94,7 @@ def get_links(keywords):
                 return results
         except Exception as e:
             print(f"[INFO] Yandex search failed: {e}")
-        
+
         return results
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
@@ -118,10 +118,24 @@ def get_text(url):
         return article.title, article.text
     except ArticleException as e:
         print(f"Failed to download article from {url}: {e}")
-        return "Error: Unable to retrieve article.", ""
     except FileNotFoundError as e:
         print(f"Directory not found for article resources: {e}")
-        return "Error: Unable to retrieve article due to missing directory.", ""
+
+    # 使用备份方案
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url={url}&output_format=markdown')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                return data.get('url'), data.get('content')
+            else:
+                print(f"Failed to extract content using backup tool: {data}")
+        else:
+            print(f"Backup tool request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error using backup tool: {e}")
+
+    return "Error: Unable to retrieve article.", ""
 
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import urllib.parse
