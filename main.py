@@ -2,16 +2,103 @@ from googlesearch import search
 import requests
 from fake_useragent import UserAgent
 
+def search_bing(keywords):
+    # 模拟 Bing 搜索
+    headers = {'User-Agent': UserAgent().random}
+    response = requests.get(f'https://www.bing.com/search?q={keywords}', headers=headers)
+    # 解析 HTML 并提取链接
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(response.text, 'html.parser')
+    links = []
+    for item in soup.find_all('a'):
+        href = item.get('href')
+        if href and href.startswith(('http://', 'https://')):
+            links.append(href)
+    return links
+
+def search_duckduckgo(keywords):
+    # 使用 DuckDuckGo API 进行搜索
+    response = requests.get(f'https://api.duckduckgo.com/?q={keywords}&format=json')
+    return [item['FirstURL'] for item in response.json().get('RelatedTopics', [])]
+
+def search_baidu(keywords):
+    # 模拟百度搜索
+    headers = {'User-Agent': UserAgent().random}
+    response = requests.get(f'https://www.baidu.com/s?wd={keywords}', headers=headers)
+    # 解析 HTML 并提取链接
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(response.text, 'html.parser')
+    links = []
+    for item in soup.find_all('a'):
+        href = item.get('href')
+        if href and href.startswith(('http://', 'https://')):
+            links.append(href)
+    return links
+
+def search_yandex(keywords):
+    # 模拟 Yandex 搜索
+    headers = {'User-Agent': UserAgent().random}
+    response = requests.get(f'https://yandex.com/search/?text={keywords}', headers=headers)
+    # 解析 HTML 并提取链接
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(response.text, 'html.parser')
+    links = []
+    for item in soup.find_all('a'):
+        href = item.get('href')
+        if href and href.startswith(('http://', 'https://')):
+            links.append(href)
+    return links
+
 def get_links(keywords):
     try:
         results = []
-        for result in search(keywords):
-            if result.startswith(('http://', 'https://')):
-                results.append(result)
+        
+        # Google Search
+        try:
+            for result in search(keywords):
+                if result.startswith(('http://', 'https://')):
+                    results.append(result)
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Google search failed: {e}")
+        
+        # Baidu Search
+        try:
+            results.extend(search_baidu(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Baidu search failed: {e}")
+        
+        # Bing Search
+        try:
+            results.extend(search_bing(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Bing search failed: {e}")
+        
+        # DuckDuckGo Search
+        try:
+            results.extend(search_duckduckgo(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] DuckDuckGo search failed: {e}")
+        
+        # Yandex Search
+        try:
+            results.extend(search_yandex(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Yandex search failed: {e}")
+        
         return results
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
-            print(f"[INFO] Too many requests to Google.")
+            print(f"[INFO] Too many requests.")
             return {'result': 429}
         raise
     except requests.exceptions.ReadTimeout as e:
