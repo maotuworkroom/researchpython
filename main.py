@@ -3,18 +3,28 @@ import requests
 from fake_useragent import UserAgent
 
 def search_bing(keywords):
-    # 模拟 Bing 搜索
-    headers = {'User-Agent': UserAgent().random}
-    response = requests.get(f'https://www.bing.com/search?q={keywords}', headers=headers)
-    # 解析 HTML 并提取链接
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(response.text, 'html.parser')
-    links = []
-    for item in soup.find_all('a'):
-        href = item.get('href')
-        if href and href.startswith(('http://', 'https://')):
-            links.append(href)
-    return links
+    # 使用 htmlapi.xinu.ink 获取 Bing 搜索结果
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://www.bing.com/search?q={keywords}&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                # 解析 HTML 并提取链接
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content using htmlapi.xinu.ink: {data}")
+        else:
+            print(f"htmlapi.xinu.ink request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error using htmlapi.xinu.ink: {e}")
+    return []
 
 def search_duckduckgo(keywords):
     # 使用 DuckDuckGo API 进行搜索
@@ -146,7 +156,6 @@ import json
 
 class RequestHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
-
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Content-type', 'application/json')
@@ -193,6 +202,28 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     })
 
             self.wfile.write(json.dumps({'results': texts}).encode())
+
+        # 新增测试端点
+        elif self.path.startswith('/test_bing'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            keywords = query_params.get('keywords', [''])[0]
+            links = search_bing(keywords)
+            self.wfile.write(json.dumps({'result': links}).encode())
+
+        elif self.path.startswith('/test_nw'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            keywords = query_params.get('keywords', [''])[0]
+            links = search_duckduckgo(keywords)
+            self.wfile.write(json.dumps({'result': links}).encode())
+
+        elif self.path.startswith('/test_xinu'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            keywords = query_params.get('keywords', [''])[0]
+            links = search_baidu(keywords)
+            self.wfile.write(json.dumps({'result': links}).encode())
 
         else:
             super().do_GET()
