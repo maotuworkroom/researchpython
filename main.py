@@ -127,7 +127,10 @@ def get_text(url):
         if response.status_code == 200:
             data = response.json()
             if data.get('success'):
-                return data.get('url'), data.get('content')
+                # 提取标题和内容
+                title = data.get('url', 'No Title')
+                content = data.get('content', '')
+                return title, content
             else:
                 print(f"Failed to extract content using backup tool: {data}")
         else:
