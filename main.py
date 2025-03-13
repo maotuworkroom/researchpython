@@ -164,18 +164,17 @@ from newspaper import Article, ArticleException, Config
 
 config = Config()
 
+# 移除 timeout_decorator 导入
 from PyPDF2 import PdfReader
 import io
 import docx
-import timeout_decorator
 
-@timeout_decorator.timeout(30)  # 设置30秒超时
+# 修改 get_text 函数，移除 timeout_decorator 装饰器
 def get_text(url):
     config.browser_user_agent = UserAgent().random
     headers = {'User-Agent': UserAgent().random}
     
     try:
-        # 限制响应大小，防止大文件消耗过多内存
         MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB 限制
         
         # 优先使用 htmlapi.xinu.ink
@@ -183,7 +182,7 @@ def get_text(url):
             response = requests.get(
                 f'https://htmlapi.xinu.ink/api/extract?url={url}&output_format=markdown',
                 timeout=10,
-                stream=True  # 使用流式请求
+                stream=True
             )
             content_length = int(response.headers.get('content-length', 0))
             if content_length > MAX_CONTENT_LENGTH:
@@ -193,10 +192,11 @@ def get_text(url):
                 data = response.json()
                 if data.get('success'):
                     content = data.get('content', '')
-                    # 限制返回内容大小
                     if len(content) > MAX_CONTENT_LENGTH:
                         content = content[:MAX_CONTENT_LENGTH] + "..."
                     return data.get('url', 'No Title'), content
+        except requests.Timeout:
+            print(f"Primary API timeout for {url}")
         except Exception as e:
             print(f"Primary API failed for {url}: {e}")
 
@@ -269,37 +269,27 @@ def get_text(url):
             # 清理内存
             soup.decompose()
             
+        except requests.Timeout:
+            print(f"Request timed out for website: {url}")
+            return "Error: Request timed out", ""
         except Exception as e:
-            print(f"Direct request failed for {url}: {e}")
-
-    except timeout_decorator.TimeoutError:
-        print(f"Request timed out for website: {url}")
-    except Exception as e:
-        print(f"Error processing {url}: {e}")
-    finally:
-        # 强制垃圾回收
-        import gc
-        gc.collect()
+            print(f"Error processing {url}: {e}")
+            return f"Error: {str(e)}", ""
+        finally:
+            import gc
+            gc.collect()
 
     return "Error: Unable to retrieve article.", ""
 
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import urllib.parse
-import json
-
+# 修改错误处理部分
 class RequestHandler(SimpleHTTPRequestHandler):
-    def do_OPTIONS(self):
-        # 处理预检请求
-        self.send_response(200)
-        self.send_cors_headers()
+    def send_error_json(self, error_message):
+        self.send_response(500)
+        self.send_header('Content-type', 'application/json')
         self.end_headers()
-
-    def send_cors_headers(self):
-        # 设置所有必要的 CORS 头部
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.send_header('Access-Control-Max-Age', '86400')  # 24小时
+        self.wfile.write(json.dumps({
+            'error': error_message
+        }).encode())
 
     def do_GET(self):
         try:
@@ -336,28 +326,38 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 links = json.loads(links_param)
                 print(f"Received {len(links)} links: {links}")
 
-                # 限制同时处理的链接数量
                 MAX_LINKS = 5
                 links = links[:MAX_LINKS]
                 
                 texts = []
                 for link in links:
-                    print(f"Reading url: {link}")
-                    article_title, link_text = get_text(link)
+                    try:
+                        print(f"Reading url: {link}")
+                        article_title, link_text = get_text(link)
 
-                    if len(link_text) < 300 or article_title.split(' ')[0] == 'Error:': 
+                        if len(link_text) < 300 or article_title.split(' ')[0] == 'Error:': 
+                            texts.append({
+                                'url': link,
+                                'length': 0
+                            })
+                        else:           
+                            texts.append({
+                                'url': link,
+                                'length': len(link_text),
+                                'text': link_text,
+                                'title': article_title
+                            })
+                    except Exception as e:
+                        print(f"Error processing link {link}: {e}")
                         texts.append({
                             'url': link,
-                            'length': 0
-                        })
-                    else:           
-                        texts.append({
-                            'url': link,
-                            'length': len(link_text),
-                            'text': link_text,
-                            'title': article_title
+                            'length': 0,
+                            'error': str(e)
                         })
 
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
                 self.wfile.write(json.dumps({'results': texts}).encode())
 
             else:
@@ -365,7 +365,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"Error in request handler: {e}")
-            self.send_error(500, str(e))
+            self.send_error_json(str(e))
         finally:
             # 强制垃圾回收
             import gc
