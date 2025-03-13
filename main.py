@@ -173,10 +173,9 @@ import docx
 def get_text(url):
     config.browser_user_agent = UserAgent().random
     headers = {'User-Agent': UserAgent().random}
+    MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB 限制
     
     try:
-        MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB 限制
-        
         # 优先使用 htmlapi.xinu.ink
         try:
             response = requests.get(
@@ -202,36 +201,41 @@ def get_text(url):
 
         # PDF 处理优化
         if url.lower().endswith('.pdf'):
-            response = requests.get(url, headers=headers, timeout=10, stream=True)
-            content_length = int(response.headers.get('content-length', 0))
-            if content_length > MAX_CONTENT_LENGTH:
-                return "Error: PDF too large", ""
-                
-            pdf = PdfReader(io.BytesIO(response.content))
-            text = ""
-            # 限制处理页数
-            max_pages = min(len(pdf.pages), 20)  
-            for i in range(max_pages):
-                text += pdf.pages[i].extract_text() + "\n"
-                if len(text) > MAX_CONTENT_LENGTH:
-                    text = text[:MAX_CONTENT_LENGTH] + "..."
-                    break
-            return url, text
+            try:
+                response = requests.get(url, headers=headers, timeout=10, stream=True)
+                content_length = int(response.headers.get('content-length', 0))
+                if content_length > MAX_CONTENT_LENGTH:
+                    return "Error: PDF too large", ""
+                    
+                pdf = PdfReader(io.BytesIO(response.content))
+                text = ""
+                max_pages = min(len(pdf.pages), 20)  
+                for i in range(max_pages):
+                    text += pdf.pages[i].extract_text() + "\n"
+                    if len(text) > MAX_CONTENT_LENGTH:
+                        text = text[:MAX_CONTENT_LENGTH] + "..."
+                        break
+                return url, text
+            except Exception as e:
+                print(f"PDF processing failed for {url}: {e}")
             
         elif url.lower().endswith('.docx'):
-            response = requests.get(url, headers=headers, timeout=10, stream=True)
-            content_length = int(response.headers.get('content-length', 0))
-            if content_length > MAX_CONTENT_LENGTH:
-                return "Error: DOCX too large", ""
-                
-            doc = docx.Document(io.BytesIO(response.content))
-            text = ""
-            for para in doc.paragraphs:
-                text += para.text + "\n"
-                if len(text) > MAX_CONTENT_LENGTH:
-                    text = text[:MAX_CONTENT_LENGTH] + "..."
-                    break
-            return url, text
+            try:
+                response = requests.get(url, headers=headers, timeout=10, stream=True)
+                content_length = int(response.headers.get('content-length', 0))
+                if content_length > MAX_CONTENT_LENGTH:
+                    return "Error: DOCX too large", ""
+                    
+                doc = docx.Document(io.BytesIO(response.content))
+                text = ""
+                for para in doc.paragraphs:
+                    text += para.text + "\n"
+                    if len(text) > MAX_CONTENT_LENGTH:
+                        text = text[:MAX_CONTENT_LENGTH] + "..."
+                        break
+                return url, text
+            except Exception as e:
+                print(f"DOCX processing failed for {url}: {e}")
 
         # newspaper3k 优化
         try:
@@ -256,7 +260,6 @@ def get_text(url):
             response.encoding = response.apparent_encoding
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 清理内存
             for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
                 tag.decompose()
             
@@ -264,21 +267,18 @@ def get_text(url):
             if len(text) > MAX_CONTENT_LENGTH:
                 text = text[:MAX_CONTENT_LENGTH] + "..."
             if len(text) > 300:
+                soup.decompose()
                 return url, text
             
-            # 清理内存
             soup.decompose()
-            
-        except requests.Timeout:
-            print(f"Request timed out for website: {url}")
-            return "Error: Request timed out", ""
         except Exception as e:
-            print(f"Error processing {url}: {e}")
-            return f"Error: {str(e)}", ""
-        finally:
-            import gc
-            gc.collect()
+            print(f"Direct request failed for {url}: {e}")
 
+    except Exception as e:
+        print(f"Error processing {url}: {e}")
+    finally:
+        gc.collect()
+        
     return "Error: Unable to retrieve article.", ""
 
 # 修改错误处理部分
