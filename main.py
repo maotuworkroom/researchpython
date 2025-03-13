@@ -1,10 +1,6 @@
 from googlesearch import search
 import requests
 from fake_useragent import UserAgent
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import urllib.parse
-import json
-import gc
 
 def search_bing(keywords):
     # 使用 htmlapi.xinu.ink 获取 Bing 搜索结果
@@ -63,96 +59,51 @@ def search_yandex(keywords):
             links.append(href)
     return links
 
-def search_academic(keywords):
-    results = []
-
-    # 百度学术搜索
-    try:
-        headers = {'User-Agent': UserAgent().random}
-        response = requests.get(f'https://xueshu.baidu.com/s?wd={keywords}', headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for item in soup.find_all('a'):
-            href = item.get('href')
-            if href and href.startswith(('http://', 'https://')):
-                results.append(href)
-    except Exception as e:
-        print(f"[INFO] Baidu Academic search failed: {e}")
-
-    # 必应学术搜索
-    try:
-        headers = {'User-Agent': UserAgent().random}
-        response = requests.get(f'https://www.bing.com/academic?q={keywords}', headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for item in soup.find_all('a'):
-            href = item.get('href')
-            if href and href.startswith(('http://', 'https://')):
-                results.append(href)
-    except Exception as e:
-        print(f"[INFO] Bing Academic search failed: {e}")
-
-    # 谷歌学术搜索
-    try:
-        headers = {'User-Agent': UserAgent().random}
-        response = requests.get(f'https://scholar.google.com/scholar?q={keywords}', headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for item in soup.find_all('a'):
-            href = item.get('href')
-            if href and href.startswith(('http://', 'https://')):
-                results.append(href)
-    except Exception as e:
-        print(f"[INFO] Google Scholar search failed: {e}")
-
-    return results
-
-def get_links(keywords, academic=False):
+def get_links(keywords):
     try:
         results = []
         
-        if academic:
-            # 使用学术搜索
-            results.extend(search_academic(keywords))
-        else:
-            # Google Search
-            try:
-                for result in search(keywords):
-                    if result.startswith(('http://', 'https://')):
-                        results.append(result)
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Google search failed: {e}")
+        # Google Search
+        try:
+            for result in search(keywords):
+                if result.startswith(('http://', 'https://')):
+                    results.append(result)
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Google search failed: {e}")
 
-            # Baidu Search
-            try:
-                results.extend(search_baidu(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Baidu search failed: {e}")
+        # Baidu Search
+        try:
+            results.extend(search_baidu(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Baidu search failed: {e}")
 
-            # DuckDuckGo Search
-            try:
-                results.extend(search_duckduckgo(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] DuckDuckGo search failed: {e}")
+        # DuckDuckGo Search
+        try:
+            results.extend(search_duckduckgo(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] DuckDuckGo search failed: {e}")
 
-            # Bing Search
-            try:
-                results.extend(search_bing(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Bing search failed: {e}")
+        # Bing Search
+        try:
+            results.extend(search_bing(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Bing search failed: {e}")
 
-            # Yandex Search
-            try:
-                results.extend(search_yandex(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Yandex search failed: {e}")
+        # Yandex Search
+        try:
+            results.extend(search_yandex(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Yandex search failed: {e}")
 
         return results
     except requests.exceptions.HTTPError as e:
@@ -168,212 +119,114 @@ from newspaper import Article, ArticleException, Config
 
 config = Config()
 
-# 移除 timeout_decorator 导入
-from PyPDF2 import PdfReader
-import io
-import docx
-
-# 修改 get_text 函数，移除 timeout_decorator 装饰器
 def get_text(url):
     config.browser_user_agent = UserAgent().random
-    headers = {'User-Agent': UserAgent().random}
-    MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # 5MB 限制
-    
+    article = Article(url, config=config)
     try:
-        # 优先使用 htmlapi.xinu.ink
-        try:
-            response = requests.get(
-                f'https://htmlapi.xinu.ink/api/extract?url={url}&output_format=markdown',
-                timeout=10,
-                stream=True
-            )
-            content_length = int(response.headers.get('content-length', 0))
-            if content_length > MAX_CONTENT_LENGTH:
-                return "Error: Content too large", ""
-                
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('success'):
-                    content = data.get('content', '')
-                    if len(content) > MAX_CONTENT_LENGTH:
-                        content = content[:MAX_CONTENT_LENGTH] + "..."
-                    return data.get('url', 'No Title'), content
-        except requests.Timeout:
-            print(f"Primary API timeout for {url}")
-        except Exception as e:
-            print(f"Primary API failed for {url}: {e}")
+        article.download()
+        article.parse()
+        return article.title, article.text
+    except ArticleException as e:
+        print(f"Failed to download article from {url}: {e}")
+    except FileNotFoundError as e:
+        print(f"Directory not found for article resources: {e}")
 
-        # PDF 处理优化
-        if url.lower().endswith('.pdf'):
-            try:
-                response = requests.get(url, headers=headers, timeout=10, stream=True)
-                content_length = int(response.headers.get('content-length', 0))
-                if content_length > MAX_CONTENT_LENGTH:
-                    return "Error: PDF too large", ""
-                    
-                pdf = PdfReader(io.BytesIO(response.content))
-                text = ""
-                max_pages = min(len(pdf.pages), 20)  
-                for i in range(max_pages):
-                    text += pdf.pages[i].extract_text() + "\n"
-                    if len(text) > MAX_CONTENT_LENGTH:
-                        text = text[:MAX_CONTENT_LENGTH] + "..."
-                        break
-                return url, text
-            except Exception as e:
-                print(f"PDF processing failed for {url}: {e}")
-            
-        elif url.lower().endswith('.docx'):
-            try:
-                response = requests.get(url, headers=headers, timeout=10, stream=True)
-                content_length = int(response.headers.get('content-length', 0))
-                if content_length > MAX_CONTENT_LENGTH:
-                    return "Error: DOCX too large", ""
-                    
-                doc = docx.Document(io.BytesIO(response.content))
-                text = ""
-                for para in doc.paragraphs:
-                    text += para.text + "\n"
-                    if len(text) > MAX_CONTENT_LENGTH:
-                        text = text[:MAX_CONTENT_LENGTH] + "..."
-                        break
-                return url, text
-            except Exception as e:
-                print(f"DOCX processing failed for {url}: {e}")
-
-        # newspaper3k 优化
-        try:
-            article = Article(url, config=config)
-            article.download()
-            article.parse()
-            text = article.text
-            if len(text) > MAX_CONTENT_LENGTH:
-                text = text[:MAX_CONTENT_LENGTH] + "..."
-            if text:
-                return article.title, text
-        except Exception as e:
-            print(f"Newspaper3k failed for {url}: {e}")
-
-        # 直接请求优化
-        try:
-            response = requests.get(url, headers=headers, timeout=10, stream=True)
-            content_length = int(response.headers.get('content-length', 0))
-            if content_length > MAX_CONTENT_LENGTH:
-                return "Error: Content too large", ""
-                
-            response.encoding = response.apparent_encoding
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
-                tag.decompose()
-            
-            text = soup.get_text(separator='\n', strip=True)
-            if len(text) > MAX_CONTENT_LENGTH:
-                text = text[:MAX_CONTENT_LENGTH] + "..."
-            if len(text) > 300:
-                soup.decompose()
-                return url, text
-            
-            soup.decompose()
-        except Exception as e:
-            print(f"Direct request failed for {url}: {e}")
-
+    # 使用备份方案
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url={url}&output_format=markdown')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                # 提取标题和内容
+                title = data.get('url', 'No Title')
+                content = data.get('content', '')
+                return title, content
+            else:
+                print(f"Failed to extract content using backup tool: {data}")
+        else:
+            print(f"Backup tool request failed with status code: {response.status_code}")
     except Exception as e:
-        print(f"Error processing {url}: {e}")
-    finally:
-        gc.collect()
-        
+        print(f"Error using backup tool: {e}")
+
     return "Error: Unable to retrieve article.", ""
 
-# 修改错误处理部分
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import urllib.parse
+import json
+
 class RequestHandler(SimpleHTTPRequestHandler):
-    def send_error_json(self, error_message):
-        self.send_response(500)
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Content-type', 'application/json')
         self.end_headers()
-        self.wfile.write(json.dumps({
-            'error': error_message
-        }).encode())
-
-    def do_GET(self):
-        try:
-            self.send_response(200)
-            self.send_cors_headers()
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
+        
+        if self.path.startswith('/get_links'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
             
-            if self.path.startswith('/get_links'):
-                parsed_path = urllib.parse.urlparse(self.path)
-                query_params = urllib.parse.parse_qs(parsed_path.query)
-                
-                keywords = query_params.get('keywords', [''])[0]
-                academic = query_params.get('academic', [False])[0]
-                
-                # 限制同时处理的链接数量
-                MAX_LINKS = 10
-                links = get_links(keywords, academic)
-                if isinstance(links, list):
-                    links = links[:MAX_LINKS]
-                
-                if isinstance(links, dict) and 'result' in links and links['result'] == 429:
-                    self.wfile.write(json.dumps(links).encode())
-                    return
-                
-                print('Found links: ', links)            
-                self.wfile.write(json.dumps({'result': links}).encode())
+            keywords = query_params.get('keywords', [''])[0]
+            links = get_links(keywords)
+            
+            if isinstance(links, dict) and 'result' in links and links['result'] == 429:
+                self.wfile.write(json.dumps(links).encode())
+                return
+            
+            print('Found links: ', links)            
+            self.wfile.write(json.dumps({'result': links}).encode())
 
-            elif self.path.startswith('/get_link_texts'):
-                parsed_path = urllib.parse.urlparse(self.path)
-                query_params = urllib.parse.parse_qs(parsed_path.query)
+        elif self.path.startswith('/get_link_texts'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
 
-                links_param = query_params.get('links', [''])[0]
-                links = json.loads(links_param)
-                print(f"Received {len(links)} links: {links}")
+            links_param = query_params.get('links', [''])[0]
+            links = json.loads(links_param)
+            print(f"Received {len(links)} links: {links}")
 
-                MAX_LINKS = 5
-                links = links[:MAX_LINKS]
-                
-                texts = []
-                for link in links:
-                    try:
-                        print(f"Reading url: {link}")
-                        article_title, link_text = get_text(link)
+            texts = []
+            for link in links:
+                print(f"Reading url: {link}")
+                article_title, link_text = get_text(link)
 
-                        if len(link_text) < 300 or article_title.split(' ')[0] == 'Error:': 
-                            texts.append({
-                                'url': link,
-                                'length': 0
-                            })
-                        else:           
-                            texts.append({
-                                'url': link,
-                                'length': len(link_text),
-                                'text': link_text,
-                                'title': article_title
-                            })
-                    except Exception as e:
-                        print(f"Error processing link {link}: {e}")
-                        texts.append({
-                            'url': link,
-                            'length': 0,
-                            'error': str(e)
-                        })
+                if len(link_text) < 300 or article_title.split(' ')[0] == 'Error:': 
+                    texts.append({
+                        'url': link,
+                        'length': 0
+                    })
+                else:           
+                    texts.append({
+                        'url': link,
+                        'length': len(link_text),
+                        'text': link_text,
+                        'title': article_title
+                    })
 
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'results': texts}).encode())
+            self.wfile.write(json.dumps({'results': texts}).encode())
 
-            else:
-                super().do_GET()
-                
-        except Exception as e:
-            print(f"Error in request handler: {e}")
-            self.send_error_json(str(e))
-        finally:
-            # 强制垃圾回收
-            import gc
-            gc.collect()
+        # 新增测试端点
+        elif self.path.startswith('/test_bing'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            keywords = query_params.get('keywords', [''])[0]
+            links = search_bing(keywords)
+            self.wfile.write(json.dumps({'result': links}).encode())
+
+        elif self.path.startswith('/test_nw'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            keywords = query_params.get('keywords', [''])[0]
+            links = search_duckduckgo(keywords)
+            self.wfile.write(json.dumps({'result': links}).encode())
+
+        elif self.path.startswith('/test_xinu'):
+            parsed_path = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_path.query)
+            keywords = query_params.get('keywords', [''])[0]
+            links = search_baidu(keywords)
+            self.wfile.write(json.dumps({'result': links}).encode())
+
+        else:
+            super().do_GET()
 
 
 if __name__ == '__main__':
