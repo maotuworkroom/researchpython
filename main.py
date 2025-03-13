@@ -1,6 +1,10 @@
 from googlesearch import search
 import requests
 from fake_useragent import UserAgent
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import urllib.parse
+import json
+import gc
 
 def search_bing(keywords):
     # 使用 htmlapi.xinu.ink 获取 Bing 搜索结果
