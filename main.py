@@ -200,10 +200,22 @@ import urllib.parse
 import json
 
 class RequestHandler(SimpleHTTPRequestHandler):
-    def do_GET(self):
-
+    def do_OPTIONS(self):
+        # 处理预检请求
         self.send_response(200)
+        self.send_cors_headers()
+        self.end_headers()
+
+    def send_cors_headers(self):
+        # 设置所有必要的 CORS 头部
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Max-Age', '86400')  # 24小时
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_cors_headers()  # 使用统一的 CORS 头部设置
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         
