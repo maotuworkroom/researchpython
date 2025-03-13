@@ -164,34 +164,74 @@ from newspaper import Article, ArticleException, Config
 
 config = Config()
 
+from PyPDF2 import PdfReader
+import io
+import docx
+import timeout_decorator
+
+@timeout_decorator.timeout(30)  # 设置30秒超时
 def get_text(url):
     config.browser_user_agent = UserAgent().random
-    article = Article(url, config=config)
+    headers = {'User-Agent': UserAgent().random}
+    
     try:
-        article.download()
-        article.parse()
-        return article.title, article.text
-    except ArticleException as e:
-        print(f"Failed to download article from {url}: {e}")
-    except FileNotFoundError as e:
-        print(f"Directory not found for article resources: {e}")
+        # 优先使用 htmlapi.xinu.ink
+        try:
+            response = requests.get(
+                f'https://htmlapi.xinu.ink/api/extract?url={url}&output_format=markdown',
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success'):
+                    return data.get('url', 'No Title'), data.get('content', '')
+        except Exception as e:
+            print(f"Primary API failed for {url}: {e}")
 
-    # 使用备份方案
-    try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url={url}&output_format=markdown')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                # 提取标题和内容
-                title = data.get('url', 'No Title')
-                content = data.get('content', '')
-                return title, content
-            else:
-                print(f"Failed to extract content using backup tool: {data}")
-        else:
-            print(f"Backup tool request failed with status code: {response.status_code}")
+        # 如果是 PDF 或 DOCX，使用专门的解决方案
+        if url.lower().endswith('.pdf'):
+            response = requests.get(url, headers=headers, timeout=10)
+            pdf = PdfReader(io.BytesIO(response.content))
+            text = ""
+            for page in pdf.pages:
+                text += page.extract_text() + "\n"
+            return url, text
+            
+        elif url.lower().endswith('.docx'):
+            response = requests.get(url, headers=headers, timeout=10)
+            doc = docx.Document(io.BytesIO(response.content))
+            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            return url, text
+            
+        # 备份方案1：使用 newspaper3k
+        try:
+            article = Article(url, config=config)
+            article.download()
+            article.parse()
+            if article.text:
+                return article.title, article.text
+        except Exception as e:
+            print(f"Newspaper3k failed for {url}: {e}")
+
+        # 备份方案2：直接请求
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.encoding = response.apparent_encoding
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
+                tag.decompose()
+            
+            text = soup.get_text(separator='\n', strip=True)
+            if len(text) > 300:
+                return url, text
+        except Exception as e:
+            print(f"Direct request failed for {url}: {e}")
+
+    except timeout_decorator.TimeoutError:
+        print(f"Request timed out for website: {url}")
     except Exception as e:
-        print(f"Error using backup tool: {e}")
+        print(f"Error processing {url}: {e}")
 
     return "Error: Unable to retrieve article.", ""
 
