@@ -59,51 +59,207 @@ def search_yandex(keywords):
             links.append(href)
     return links
 
-def get_links(keywords):
+def search_annas(keywords):
+    # 使用 htmlapi.xinu.ink 获取安妮档案搜索结果
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://zh.annas-archive.org/search?index=journals&q={keywords}&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Annas Archive: {data}")
+        else:
+            print(f"Annas Archive request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Annas Archive: {e}")
+    return []
+
+def search_weipu(keywords):
+    # 使用 htmlapi.xinu.ink 获取维普搜索结果
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://mqikan.cqvip.com/Article/index?from=Article_index&key=U%3D{keywords}&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Weipu: {data}")
+        else:
+            print(f"Weipu request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Weipu: {e}")
+    return []
+
+def search_arxiv(keywords):
+    # 使用 htmlapi.xinu.ink 获取arxiv搜索结果
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://arxiv.org/search/?query={keywords}&searchtype=all&abstracts=show&order=-announced_date_first&size=50&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from arXiv: {data}")
+        else:
+            print(f"arXiv request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching arXiv: {e}")
+    return []
+
+def search_semantic_scholar(keywords):
+    # 使用 htmlapi.xinu.ink 获取Semantic Scholar搜索结果
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://www.semanticscholar.org/search?q={keywords}&sort=relevance&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Semantic Scholar: {data}")
+        else:
+            print(f"Semantic Scholar request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Semantic Scholar: {e}")
+    return []
+
+def search_chaoxing(keywords):
+    # 使用 htmlapi.xinu.ink 获取超星期刊搜索结果
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://qikan.chaoxing.com/searchjour?sw={keywords}&size=50&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Chaoxing: {data}")
+        else:
+            print(f"Chaoxing request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Chaoxing: {e}")
+    return []
+
+def get_links(keywords, academic=False):
     try:
         results = []
         
-        # Google Search
-        try:
-            for result in search(keywords):
-                if result.startswith(('http://', 'https://')):
-                    results.append(result)
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Google search failed: {e}")
+        if academic:
+            # 安妮档案搜索
+            try:
+                results.extend(search_annas(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Annas Archive search failed: {e}")
 
-        # Baidu Search
-        try:
-            results.extend(search_baidu(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Baidu search failed: {e}")
+            # 维普搜索
+            try:
+                results.extend(search_weipu(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Weipu search failed: {e}")
 
-        # DuckDuckGo Search
-        try:
-            results.extend(search_duckduckgo(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] DuckDuckGo search failed: {e}")
+            # arXiv搜索
+            try:
+                results.extend(search_arxiv(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] arXiv search failed: {e}")
 
-        # Bing Search
-        try:
-            results.extend(search_bing(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Bing search failed: {e}")
+            # Semantic Scholar搜索
+            try:
+                results.extend(search_semantic_scholar(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Semantic Scholar search failed: {e}")
 
-        # Yandex Search
-        try:
-            results.extend(search_yandex(keywords))
-            if results:
-                return results
-        except Exception as e:
-            print(f"[INFO] Yandex search failed: {e}")
+            # 超星期刊搜索
+            try:
+                results.extend(search_chaoxing(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Chaoxing search failed: {e}")
+        else:
+            # Google Search
+            try:
+                for result in search(keywords):
+                    if result.startswith(('http://', 'https://')):
+                        results.append(result)
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Google search failed: {e}")
+
+            # Baidu Search
+            try:
+                results.extend(search_baidu(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Baidu search failed: {e}")
+
+            # DuckDuckGo Search
+            try:
+                results.extend(search_duckduckgo(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] DuckDuckGo search failed: {e}")
+
+            # Bing Search
+            try:
+                results.extend(search_bing(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Bing search failed: {e}")
+
+            # Yandex Search
+            try:
+                results.extend(search_yandex(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Yandex search failed: {e}")
 
         return results
     except requests.exceptions.HTTPError as e:
@@ -166,7 +322,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
             query_params = urllib.parse.parse_qs(parsed_path.query)
             
             keywords = query_params.get('keywords', [''])[0]
-            links = get_links(keywords)
+            academic = query_params.get('academic', ['false'])[0].lower() == 'true'
+            links = get_links(keywords, academic)
             
             if isinstance(links, dict) and 'result' in links and links['result'] == 429:
                 self.wfile.write(json.dumps(links).encode())
