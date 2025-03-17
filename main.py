@@ -1,8 +1,6 @@
 from googlesearch import search
 import requests
 from fake_useragent import UserAgent
-from bs4 import BeautifulSoup
-import urllib.parse
 
 def search_bing(keywords):
     # 使用 htmlapi.xinu.ink 获取 Bing 搜索结果
@@ -61,143 +59,9 @@ def search_yandex(keywords):
             links.append(href)
     return links
 
-def search_chaoxing(keywords):
-    # 超星期刊搜索
-    headers = {'User-Agent': UserAgent().random}
-    encoded_keywords = urllib.parse.quote(keywords)
-    url = f'https://qikan.chaoxing.com/searchjour?sw={encoded_keywords}&size=50'
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        links = []
-        for item in soup.select('.journal_title a'):
-            href = item.get('href')
-            if href:
-                links.append(f'https://qikan.chaoxing.com{href}')
-        return links
-    except Exception as e:
-        print(f"[INFO] Chaoxing search failed: {e}")
-        return []
-
-def search_arxiv(keywords):
-    # arXiv搜索
-    headers = {'User-Agent': UserAgent().random}
-    encoded_keywords = urllib.parse.quote(keywords)
-    url = f'https://arxiv.org/search/?query={encoded_keywords}&searchtype=all&abstracts=show&order=-announced_date_first&size=50'
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        links = []
-        for item in soup.select('.list-title a'):
-            href = item.get('href')
-            if href and href.startswith(('http://', 'https://')):
-                links.append(href)
-        return links
-    except Exception as e:
-        print(f"[INFO] arXiv search failed: {e}")
-        return []
-
-def search_weipu(keywords):
-    # 维普搜索
-    headers = {'User-Agent': UserAgent().random}
-    encoded_keywords = urllib.parse.quote(keywords)
-    url = f'https://mqikan.cqvip.com/Article/index?from=Article_index&key=U%3D{encoded_keywords}'
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        links = []
-        for item in soup.select('.article-list-title a'):
-            href = item.get('href')
-            if href:
-                links.append(f'https://mqikan.cqvip.com{href}')
-        return links
-    except Exception as e:
-        print(f"[INFO] Weipu search failed: {e}")
-        return []
-
-def search_semantic_scholar(keywords):
-    # Semantic Scholar搜索
-    headers = {'User-Agent': UserAgent().random}
-    encoded_keywords = urllib.parse.quote(keywords)
-    url = f'https://www.semanticscholar.org/search?q={encoded_keywords}&sort=relevance'
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        links = []
-        for item in soup.select('.result-page a.card'):
-            href = item.get('href')
-            if href:
-                links.append(f'https://www.semanticscholar.org{href}')
-        return links
-    except Exception as e:
-        print(f"[INFO] Semantic Scholar search failed: {e}")
-        return []
-
-def search_annas_archive(keywords):
-    # 安妮档案搜索
-    headers = {'User-Agent': UserAgent().random}
-    encoded_keywords = urllib.parse.quote(keywords)
-    url = f'https://zh.annas-archive.org/search?index=journals&q={encoded_keywords}'
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        links = []
-        for item in soup.select('.item-title a'):
-            href = item.get('href')
-            if href:
-                links.append(f'https://zh.annas-archive.org{href}')
-        return links
-    except Exception as e:
-        print(f"[INFO] Anna's Archive search failed: {e}")
-        return []
-
 def get_links(keywords):
     try:
         results = []
-        
-        # 检查是否为学术搜索模式
-        parsed_path = urllib.parse.urlparse(self.path)
-        query_params = urllib.parse.parse_qs(parsed_path.query)
-        is_academic = query_params.get('academic', ['false'])[0].lower() == 'true'
-        
-        if is_academic:
-            # 按指定顺序调用学术搜索引擎
-            try:
-                results.extend(search_chaoxing(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Chaoxing search failed: {e}")
-
-            try:
-                results.extend(search_arxiv(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] arXiv search failed: {e}")
-
-            try:
-                results.extend(search_weipu(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Weipu search failed: {e}")
-
-            try:
-                results.extend(search_semantic_scholar(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Semantic Scholar search failed: {e}")
-
-            try:
-                results.extend(search_annas_archive(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Anna's Archive search failed: {e}")
-
-            return results
         
         # Google Search
         try:
