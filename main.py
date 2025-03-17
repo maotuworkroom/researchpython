@@ -179,21 +179,13 @@ def get_links(keywords, academic=False):
         results = []
         
         if academic:
-            # 安妮档案搜索
+            # 超星期刊搜索
             try:
-                results.extend(search_annas(keywords))
+                results.extend(search_chaoxing(keywords))
                 if results:
                     return results
             except Exception as e:
-                print(f"[INFO] Annas Archive search failed: {e}")
-
-            # 维普搜索
-            try:
-                results.extend(search_weipu(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Weipu search failed: {e}")
+                print(f"[INFO] Chaoxing search failed: {e}")
 
             # arXiv搜索
             try:
@@ -203,6 +195,14 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] arXiv search failed: {e}")
 
+            # 维普搜索
+            try:
+                results.extend(search_weipu(keywords))
+                if results:
+                    return results
+            except Exception as e:
+                print(f"[INFO] Weipu search failed: {e}")
+
             # Semantic Scholar搜索
             try:
                 results.extend(search_semantic_scholar(keywords))
@@ -211,13 +211,13 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Semantic Scholar search failed: {e}")
 
-            # 超星期刊搜索
+            # 安妮档案搜索
             try:
-                results.extend(search_chaoxing(keywords))
+                results.extend(search_annas(keywords))
                 if results:
                     return results
             except Exception as e:
-                print(f"[INFO] Chaoxing search failed: {e}")
+                print(f"[INFO] Annas Archive search failed: {e}")
         else:
             # Google Search
             try:
