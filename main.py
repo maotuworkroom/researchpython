@@ -1,6 +1,8 @@
 from googlesearch import search
 import requests
 from fake_useragent import UserAgent
+from bs4 import BeautifulSoup
+import urllib.parse
 
 def search_bing(keywords):
     # 使用 htmlapi.xinu.ink 获取 Bing 搜索结果
@@ -61,125 +63,105 @@ def search_yandex(keywords):
 
 def search_chaoxing(keywords):
     # 超星期刊搜索
+    headers = {'User-Agent': UserAgent().random}
+    encoded_keywords = urllib.parse.quote(keywords)
+    url = f'https://qikan.chaoxing.com/searchjour?sw={encoded_keywords}&size=50'
     try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://qikan.chaoxing.com/searchjour?sw={keywords}&size=50&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Chaoxing: {data}")
-        else:
-            print(f"Chaoxing request failed with status code: {response.status_code}")
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for item in soup.select('.journal_title a'):
+            href = item.get('href')
+            if href:
+                links.append(f'https://qikan.chaoxing.com{href}')
+        return links
     except Exception as e:
-        print(f"Error searching Chaoxing: {e}")
-    return []
+        print(f"[INFO] Chaoxing search failed: {e}")
+        return []
 
 def search_arxiv(keywords):
-    # arxiv搜索
+    # arXiv搜索
+    headers = {'User-Agent': UserAgent().random}
+    encoded_keywords = urllib.parse.quote(keywords)
+    url = f'https://arxiv.org/search/?query={encoded_keywords}&searchtype=all&abstracts=show&order=-announced_date_first&size=50'
     try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://arxiv.org/search/?query={keywords}&searchtype=all&abstracts=show&order=-announced_date_first&size=50&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from arXiv: {data}")
-        else:
-            print(f"arXiv request failed with status code: {response.status_code}")
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for item in soup.select('.list-title a'):
+            href = item.get('href')
+            if href and href.startswith(('http://', 'https://')):
+                links.append(href)
+        return links
     except Exception as e:
-        print(f"Error searching arXiv: {e}")
-    return []
+        print(f"[INFO] arXiv search failed: {e}")
+        return []
 
 def search_weipu(keywords):
     # 维普搜索
+    headers = {'User-Agent': UserAgent().random}
+    encoded_keywords = urllib.parse.quote(keywords)
+    url = f'https://mqikan.cqvip.com/Article/index?from=Article_index&key=U%3D{encoded_keywords}'
     try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://mqikan.cqvip.com/Article/index?from=Article_index&key=U%3D{keywords}&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Weipu: {data}")
-        else:
-            print(f"Weipu request failed with status code: {response.status_code}")
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for item in soup.select('.article-list-title a'):
+            href = item.get('href')
+            if href:
+                links.append(f'https://mqikan.cqvip.com{href}')
+        return links
     except Exception as e:
-        print(f"Error searching Weipu: {e}")
-    return []
+        print(f"[INFO] Weipu search failed: {e}")
+        return []
 
 def search_semantic_scholar(keywords):
     # Semantic Scholar搜索
+    headers = {'User-Agent': UserAgent().random}
+    encoded_keywords = urllib.parse.quote(keywords)
+    url = f'https://www.semanticscholar.org/search?q={encoded_keywords}&sort=relevance'
     try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://www.semanticscholar.org/search?q={keywords}&sort=relevance&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Semantic Scholar: {data}")
-        else:
-            print(f"Semantic Scholar request failed with status code: {response.status_code}")
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for item in soup.select('.result-page a.card'):
+            href = item.get('href')
+            if href:
+                links.append(f'https://www.semanticscholar.org{href}')
+        return links
     except Exception as e:
-        print(f"Error searching Semantic Scholar: {e}")
-    return []
+        print(f"[INFO] Semantic Scholar search failed: {e}")
+        return []
 
 def search_annas_archive(keywords):
     # 安妮档案搜索
+    headers = {'User-Agent': UserAgent().random}
+    encoded_keywords = urllib.parse.quote(keywords)
+    url = f'https://zh.annas-archive.org/search?index=journals&q={encoded_keywords}'
     try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://zh.annas-archive.org/search?index=journals&q={keywords}&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Anna's Archive: {data}")
-        else:
-            print(f"Anna's Archive request failed with status code: {response.status_code}")
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for item in soup.select('.item-title a'):
+            href = item.get('href')
+            if href:
+                links.append(f'https://zh.annas-archive.org{href}')
+        return links
     except Exception as e:
-        print(f"Error searching Anna's Archive: {e}")
-    return []
+        print(f"[INFO] Anna's Archive search failed: {e}")
+        return []
 
-def get_links(keywords, academic=False):
+def get_links(keywords):
     try:
         results = []
         
-        if academic:
-            # 超星期刊
+        # 检查是否为学术搜索模式
+        parsed_path = urllib.parse.urlparse(self.path)
+        query_params = urllib.parse.parse_qs(parsed_path.query)
+        is_academic = query_params.get('academic', ['false'])[0].lower() == 'true'
+        
+        if is_academic:
+            # 按指定顺序调用学术搜索引擎
             try:
                 results.extend(search_chaoxing(keywords))
                 if results:
@@ -187,7 +169,6 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Chaoxing search failed: {e}")
 
-            # arxiv
             try:
                 results.extend(search_arxiv(keywords))
                 if results:
@@ -195,7 +176,6 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] arXiv search failed: {e}")
 
-            # 维普
             try:
                 results.extend(search_weipu(keywords))
                 if results:
@@ -203,7 +183,6 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Weipu search failed: {e}")
 
-            # Semantic Scholar
             try:
                 results.extend(search_semantic_scholar(keywords))
                 if results:
@@ -211,7 +190,6 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Semantic Scholar search failed: {e}")
 
-            # 安妮档案
             try:
                 results.extend(search_annas_archive(keywords))
                 if results:
@@ -219,48 +197,49 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Anna's Archive search failed: {e}")
 
-        else:
-            # Google Search
-            try:
-                for result in search(keywords):
-                    if result.startswith(('http://', 'https://')):
-                        results.append(result)
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Google search failed: {e}")
+            return results
+        
+        # Google Search
+        try:
+            for result in search(keywords):
+                if result.startswith(('http://', 'https://')):
+                    results.append(result)
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Google search failed: {e}")
 
-            # Baidu Search
-            try:
-                results.extend(search_baidu(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Baidu search failed: {e}")
+        # Baidu Search
+        try:
+            results.extend(search_baidu(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Baidu search failed: {e}")
 
-            # DuckDuckGo Search
-            try:
-                results.extend(search_duckduckgo(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] DuckDuckGo search failed: {e}")
+        # DuckDuckGo Search
+        try:
+            results.extend(search_duckduckgo(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] DuckDuckGo search failed: {e}")
 
-            # Bing Search
-            try:
-                results.extend(search_bing(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Bing search failed: {e}")
+        # Bing Search
+        try:
+            results.extend(search_bing(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Bing search failed: {e}")
 
-            # Yandex Search
-            try:
-                results.extend(search_yandex(keywords))
-                if results:
-                    return results
-            except Exception as e:
-                print(f"[INFO] Yandex search failed: {e}")
+        # Yandex Search
+        try:
+            results.extend(search_yandex(keywords))
+            if results:
+                return results
+        except Exception as e:
+            print(f"[INFO] Yandex search failed: {e}")
 
         return results
     except requests.exceptions.HTTPError as e:
