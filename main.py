@@ -59,100 +59,8 @@ def search_yandex(keywords):
             links.append(href)
     return links
 
-def search_annas(keywords):
-    # 使用 htmlapi.xinu.ink 获取安妮档案搜索结果
-    try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://zh.annas-archive.org/search?index=journals&q={keywords}&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Annas Archive: {data}")
-        else:
-            print(f"Annas Archive request failed with status code: {response.status_code}")
-    except Exception as e:
-        print(f"Error searching Annas Archive: {e}")
-    return []
-
-def search_weipu(keywords):
-    # 使用 htmlapi.xinu.ink 获取维普搜索结果
-    try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://mqikan.cqvip.com/Article/index?from=Article_index&key=U%3D{keywords}&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Weipu: {data}")
-        else:
-            print(f"Weipu request failed with status code: {response.status_code}")
-    except Exception as e:
-        print(f"Error searching Weipu: {e}")
-    return []
-
-def search_arxiv(keywords):
-    # 使用 htmlapi.xinu.ink 获取arxiv搜索结果
-    try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://arxiv.org/search/?query={keywords}&searchtype=all&abstracts=show&order=-announced_date_first&size=50&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from arXiv: {data}")
-        else:
-            print(f"arXiv request failed with status code: {response.status_code}")
-    except Exception as e:
-        print(f"Error searching arXiv: {e}")
-    return []
-
-def search_semantic_scholar(keywords):
-    # 使用 htmlapi.xinu.ink 获取Semantic Scholar搜索结果
-    try:
-        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://www.semanticscholar.org/search?q={keywords}&sort=relevance&output_format=html')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
-                links = []
-                for item in soup.find_all('a'):
-                    href = item.get('href')
-                    if href and href.startswith(('http://', 'https://')):
-                        links.append(href)
-                return links
-            else:
-                print(f"Failed to extract content from Semantic Scholar: {data}")
-        else:
-            print(f"Semantic Scholar request failed with status code: {response.status_code}")
-    except Exception as e:
-        print(f"Error searching Semantic Scholar: {e}")
-    return []
-
 def search_chaoxing(keywords):
-    # 使用 htmlapi.xinu.ink 获取超星期刊搜索结果
+    # 超星期刊搜索
     try:
         response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://qikan.chaoxing.com/searchjour?sw={keywords}&size=50&output_format=html')
         if response.status_code == 200:
@@ -174,12 +82,104 @@ def search_chaoxing(keywords):
         print(f"Error searching Chaoxing: {e}")
     return []
 
+def search_arxiv(keywords):
+    # arxiv搜索
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://arxiv.org/search/?query={keywords}&searchtype=all&abstracts=show&order=-announced_date_first&size=50&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from arXiv: {data}")
+        else:
+            print(f"arXiv request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching arXiv: {e}")
+    return []
+
+def search_weipu(keywords):
+    # 维普搜索
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://mqikan.cqvip.com/Article/index?from=Article_index&key=U%3D{keywords}&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Weipu: {data}")
+        else:
+            print(f"Weipu request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Weipu: {e}")
+    return []
+
+def search_semantic_scholar(keywords):
+    # Semantic Scholar搜索
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://www.semanticscholar.org/search?q={keywords}&sort=relevance&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Semantic Scholar: {data}")
+        else:
+            print(f"Semantic Scholar request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Semantic Scholar: {e}")
+    return []
+
+def search_annas_archive(keywords):
+    # 安妮档案搜索
+    try:
+        response = requests.get(f'https://htmlapi.xinu.ink/api/extract?url=https://zh.annas-archive.org/search?index=journals&q={keywords}&output_format=html')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(data.get('content', ''), 'html.parser')
+                links = []
+                for item in soup.find_all('a'):
+                    href = item.get('href')
+                    if href and href.startswith(('http://', 'https://')):
+                        links.append(href)
+                return links
+            else:
+                print(f"Failed to extract content from Anna's Archive: {data}")
+        else:
+            print(f"Anna's Archive request failed with status code: {response.status_code}")
+    except Exception as e:
+        print(f"Error searching Anna's Archive: {e}")
+    return []
+
 def get_links(keywords, academic=False):
     try:
         results = []
         
         if academic:
-            # 超星期刊搜索
+            # 超星期刊
             try:
                 results.extend(search_chaoxing(keywords))
                 if results:
@@ -187,7 +187,7 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Chaoxing search failed: {e}")
 
-            # arXiv搜索
+            # arxiv
             try:
                 results.extend(search_arxiv(keywords))
                 if results:
@@ -195,7 +195,7 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] arXiv search failed: {e}")
 
-            # 维普搜索
+            # 维普
             try:
                 results.extend(search_weipu(keywords))
                 if results:
@@ -203,7 +203,7 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Weipu search failed: {e}")
 
-            # Semantic Scholar搜索
+            # Semantic Scholar
             try:
                 results.extend(search_semantic_scholar(keywords))
                 if results:
@@ -211,13 +211,14 @@ def get_links(keywords, academic=False):
             except Exception as e:
                 print(f"[INFO] Semantic Scholar search failed: {e}")
 
-            # 安妮档案搜索
+            # 安妮档案
             try:
-                results.extend(search_annas(keywords))
+                results.extend(search_annas_archive(keywords))
                 if results:
                     return results
             except Exception as e:
-                print(f"[INFO] Annas Archive search failed: {e}")
+                print(f"[INFO] Anna's Archive search failed: {e}")
+
         else:
             # Google Search
             try:
@@ -322,8 +323,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
             query_params = urllib.parse.parse_qs(parsed_path.query)
             
             keywords = query_params.get('keywords', [''])[0]
-            academic = query_params.get('academic', ['false'])[0].lower() == 'true'
-            links = get_links(keywords, academic)
+            links = get_links(keywords)
             
             if isinstance(links, dict) and 'result' in links and links['result'] == 429:
                 self.wfile.write(json.dumps(links).encode())
