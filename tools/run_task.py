@@ -166,6 +166,13 @@ FILTER_GRID = [
      "min_width_frac": 0.04},
     {"name": "len3_c80_h40", "min_word_conf": 80, "min_word_len": 3,
      "min_glyph_h_px": 40},
+    # 文字行形状判据：真实站名是一行多字，宽/高 >= 2.5；照片纹理噪声多为方块/竖条
+    {"name": "len2_c60_h40_a25", "min_word_conf": 60, "min_word_len": 2,
+     "min_glyph_h_px": 40, "min_aspect": 2.5},
+    {"name": "len2_c70_h40_a25", "min_word_conf": 70, "min_word_len": 2,
+     "min_glyph_h_px": 40, "min_aspect": 2.5},
+    {"name": "len2_c60_h30_a20", "min_word_conf": 60, "min_word_len": 2,
+     "min_glyph_h_px": 30, "min_aspect": 2.0},
 ]
 
 NOTO_FONT_PATHS = [
@@ -194,8 +201,7 @@ def _job_ocr_eval(job):
                          "bbox": h["bbox"], "inside_frac": h["inside_frac"]}
                         for h in ocr["hits"]],
                "n_weak": ocr["n_weak"],
-               "rms": GD.region_metrics(rgba, expected_bbox, 40.0)["rms"]
-               if expected_bbox else None}
+               "rms": GD.region_rms(rgba, "scene")}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
     return {"label": label, "truth": truth, "sec": round(time.time() - t0, 2),
@@ -387,7 +393,8 @@ def _job_ocr_regress(job):
                            "n_weak": ocr_base["n_weak"],
                            "prep_sha1": ocr_base["prep_sha1"],
                            "ocr_sec": ocr_base["ocr_sec"]}
-        rep["prep_base"] = OG.prep_fingerprint(rgba, region="scene", **scene_cfg)
+        rep["prep_base"] = OG.prep_fingerprint(rgba, region="scene",
+                                **GD.prep_cfg_from(cfg, "scene"))
         rep["band_geom"] = OG.geom_report()
 
         t = time.time()
@@ -417,7 +424,8 @@ def _job_ocr_regress(job):
         vbrand, rbrand, mbrand = GD.classify(ocr_brand, cfg, "JR", "band_top", final)
         rep["timings"]["text_gate_band"] = round(time.time() - t, 2)
         # 嵌字只动色带，场景区域应与底图逐字节一致（字体无关的一致性证据）
-        rep["prep_final_scene"] = OG.prep_fingerprint(final, region="scene", **scene_cfg)
+        rep["prep_final_scene"] = OG.prep_fingerprint(final, region="scene",
+                                    **GD.prep_cfg_from(cfg, "scene"))
         rep["recheck"] = {
             "band_top": bt["top"], "band_bottom": bt["bottom"],
             "station_verdict": vf, "station_reason": rf,

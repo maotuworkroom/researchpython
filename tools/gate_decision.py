@@ -71,6 +71,12 @@ def ocr_cfg_from(cfg, region="scene"):
             "min_overlap": float(p["min_overlap"])}
 
 
+def prep_cfg_from(cfg, region="scene"):
+    """配置 -> ocr_gate.prep_fingerprint 的关键字参数（预处理子集）。"""
+    c = ocr_cfg_from(cfg, region)
+    return {k: c[k] for k in ("scale", "binarize", "mask_out", "crop", "denoise")}
+
+
 def levenshtein(a, b):
     if a == b:
         return 0
@@ -208,6 +214,12 @@ def ink_metrics(rgba, region="band_bottom", region_bbox=None, ink_dev_thr=40.0,
 _WORD_RE = re.compile(r"^[0-9A-Za-z\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]+$")
 
 
+def region_rms(rgba, region="scene"):
+    """区域灰度标准差（对比度指标，纯数值）。"""
+    reg = OG.region_geom(region)[1]
+    return round(float(gray_full(rgba)[reg].std()), 1)
+
+
 def filter_hits(hits, f):
     """词有效性过滤：把照片纹理产生的符号噪声（=, >, |, ¢, 单字母）剔掉。
 
@@ -216,6 +228,7 @@ def filter_hits(hits, f):
       min_word_len      最短词长（站名 >=3 字）
       min_glyph_h_px    命中原图字高下限（排除纹理碎斑）
       min_width_frac    命中宽度占场景宽比例下限（排除小碎块）
+      min_aspect        命中框宽高比下限（真实站名是一行字，宽/高 >= 2.5）
       scene_w           场景宽（原图 px）
     """
     out = []
@@ -227,10 +240,13 @@ def filter_hits(hits, f):
             continue
         if float(h.get("conf", 0)) < float(f.get("min_word_conf", 60)):
             continue
-        if h["bbox"][3] < int(f.get("min_glyph_h_px", 0)):
+        w, hh = h["bbox"][2], h["bbox"][3]
+        if hh < int(f.get("min_glyph_h_px", 0)):
+            continue
+        if f.get("min_aspect") and hh > 0 and (w / float(hh)) < float(f["min_aspect"]):
             continue
         if f.get("scene_w"):
-            frac = h["bbox"][2] / float(f["scene_w"])
+            frac = w / float(f["scene_w"])
             if frac < float(f.get("min_width_frac", 0)):
                 continue
         out.append(h)

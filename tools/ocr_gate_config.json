@@ -23,7 +23,8 @@
     "min_word_conf": 75,
     "min_word_len": 3,
     "min_glyph_h_px": 30,
-    "min_width_frac": 0.04
+    "min_width_frac": 0.04,
+    "min_aspect": 0.0
   },
   "decision": {
     "pass_min_char_coverage": 0.95,
