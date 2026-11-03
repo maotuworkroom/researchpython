@@ -148,14 +148,16 @@ def _job_colornorm(job):
 
 # ---------------- stamp-ocr-gate（tesseract 文字门禁） ----------------
 
-# tune 缺省网格：psm=11 / lang=jpn+eng / conf>=60 固定，变预处理（裁切+缩放/二值化）
-# 注：全幅 2048 灰度直跑在本 runner 上病态慢（>140s/图），故默认先裁场景 bbox
-# 并降采样；"放大 2x"（scale=2）作为可选档保留。
+# tune 缺省网格：psm=11 / lang=jpn+eng / conf>=60 固定，只变预处理。
+# 实测代价（本机连通域数值 + 云端 ocr_sec）：
+#   gray@0.5   最快（~0.2s/图）
+#   otsu@0.5   中等
+#   adaptive   连通域 9532（827 个碎斑）→ psm11 稀疏模式极慢，已剔除
+#   scale=1.0  4 倍像素 → 慢 4 倍，仅作可选档
 DEFAULT_TUNE_GRID = [
-    {"name": "c05gray", "scale": 0.5},
-    {"name": "c05otsu", "scale": 0.5, "binarize": "otsu"},
-    {"name": "c10otsu", "scale": 1.0, "binarize": "otsu"},
-    {"name": "c05adp", "scale": 0.5, "binarize": "adaptive"},
+    {"name": "g50", "scale": 0.5},
+    {"name": "o50", "scale": 0.5, "binarize": "otsu"},
+    {"name": "g35", "scale": 0.35},
 ]
 
 NOTO_FONT_PATHS = [
