@@ -61,27 +61,40 @@ VARIANTS = ["vivid", "dark", "semi", "small", "rotated"]
 VIVID_COLORS = [(228, 32, 32), (255, 196, 0), (24, 132, 231)]
 
 
+_FONT_CACHE = {}
+
+
 def pick_font(size):
+    if size in _FONT_CACHE:
+        return _FONT_CACHE[size]
     for path, idx in FONT_CANDIDATES:
         if not os.path.exists(path):
             continue
         try:
-            return ImageFont.truetype(path, size, index=idx), path
+            f = ImageFont.truetype(path, size, index=idx)
+            _FONT_CACHE[size] = (f, path)
+            return _FONT_CACHE[size]
         except Exception:
             continue
     raise RuntimeError("no CJK font available")
 
 
 def fit_font(text, max_w, max_h, start):
-    size = start
-    while size > 12:
-        f, p = pick_font(size)
+    """从小到大的等比试探改为二分，避免反复 load 大 TTC（云端 Noto TTC 每次数百 ms）。"""
+    lo, hi, best = 12, start, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        f, p = pick_font(mid)
         l, t, r, b = f.getbbox(text)
         if (r - l) <= max_w and (b - t) <= max_h:
-            return f, p, size
-        size -= 4
-    f, p = pick_font(12)
-    return f, p, 12
+            best = (f, p, mid)
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if best is None:
+        f, p = pick_font(12)
+        return f, p, 12
+    return best
 
 
 def _bbox_fits(ins, cx, cy, w, h, margin=6):

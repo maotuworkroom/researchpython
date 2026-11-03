@@ -1,0 +1,33 @@
+{
+  "config_version": "2026-11-03.1",
+  "ocr": {
+    "lang": "jpn+eng",
+    "psm": 11,
+    "oem": 1,
+    "extra": "-c tessedit_do_invert=0",
+    "conf_hit": 60,
+    "conf_weak": 35
+  },
+  "preprocess": {
+    "crop_to_scene": true,
+    "scale": 0.5,
+    "binarize": "otsu",
+    "mask_out_scene": true,
+    "min_overlap": 0.5
+  },
+  "decision": {
+    "pass_min_char_coverage": 0.6,
+    "substitution_max_char_mismatch": 0.5,
+    "low_contrast_rms_min": 18.0,
+    "band_overlap_max": 0.15,
+    "circle_outside_max": 0.15,
+    "out_of_bounds_inside_min": 0.7,
+    "ink_dev_thr": 40.0
+  },
+  "provenance": {
+    "psm_source": "任务规格写死: -l jpn+eng --psm 11, conf>=60",
+    "threshold_source": "阈值均在本文件写死; 改动须 bump config_version 并重跑 tune",
+    "calibration": "positive_cases 30 例(鲜/暗/半透明/小字号/旋转) + negatives 20 例",
+    "runtime": "ubuntu-latest runner, apt tesseract-ocr + tesseract-ocr-jpn"
+  }
+}

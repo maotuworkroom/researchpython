@@ -36,6 +36,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
+import gate_decision as GD  # noqa: E402  阈值配置 + 失败原因分类
+
 SAMPLE_TAG = None
 _STATIONS = None
 
@@ -163,24 +165,35 @@ NOTO_FONT_PATHS = [
 
 
 def _job_ocr_eval(job):
-    """单图 OCR 门禁评估（对照集 tune 用）。"""
-    path, truth, label, gate_cfg = job
+    """单图 OCR 门禁评估（对照集 tune 用）：走 gate_decision 出 verdict+reason。"""
+    path, truth, label, gate_cfg, expected_text, expected_bbox = job
     import numpy as np
     from PIL import Image
+    import gate_decision as GD
     import ocr_gate as OG
     t0 = time.time()
-    err, out = None, None
+    cfg = GD.load_config()
+    err, res = None, None
     try:
         rgba = np.array(Image.open(path).convert("RGBA"))
-        out = OG.ocr_scene_text(rgba, **gate_cfg)
+        cfg2 = dict(cfg)
+        og = dict(GD.ocr_cfg_from(cfg))
+        og.update({k: v for k, v in gate_cfg.items() if v is not None})
+        ocr = OG.ocr_scene_text(rgba, **og)
+        verdict, reason, metrics = GD.classify(ocr, cfg2, expected_text,
+                                               expected_bbox, rgba)
+        res = {"verdict": verdict, "reason": reason, "metrics": metrics,
+               "ocr_sec": ocr["ocr_sec"], "hits": ocr["hits"][:6]}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
     return {"label": label, "truth": truth, "sec": round(time.time() - t0, 2),
             "error": err,
-            "n_hits": out["n_hits"] if out else None,
-            "pass": out["pass"] if out else None,
-            "hits": out["hits"][:8] if out else [],
-            "ocr_sec": out.get("ocr_sec") if out else None}
+            "verdict": res["verdict"] if res else None,
+            "reason": res["reason"] if res else None,
+            "metrics": res["metrics"] if res else None,
+            "hits": res["hits"] if res else [],
+            "ocr_sec": res["ocr_sec"] if res else None,
+            "config_version": cfg["config_version"], "config_sha256": cfg["_sha256"]}
 
 
 def _font_missing(text):
@@ -234,17 +247,29 @@ def run_ocr_tune(params, out_dir, scratch):
               "fixed": {"psm": 11, "lang": "jpn+eng", "conf_thr": 60},
               "configs": []}
     limit = int(params.get("limit", 0))  # >0: 每类取前 N 例（快速探测用）
+    pos_only = bool(params.get("positives_only", False))  # 只跑正例（提速探测召回）
     if limit > 0:
         pos_sel = mani["positives"][::max(1, len(mani["positives"]) // limit)][:limit]
         neg_sel = mani["negatives"][::max(1, len(mani["negatives"]) // limit)][:limit]
         report["limit"] = {"positives": len(pos_sel), "negatives": len(neg_sel)}
     else:
         pos_sel, neg_sel = mani["positives"], mani["negatives"]
+    if pos_only:
+        neg_sel = []
+        report["positives_only"] = True
+
+    def _bbox(e):
+        if "center" not in e or "layer_wh" not in e:
+            return None
+        cx, cy = e["center"]
+        w, h = e["layer_wh"]
+        return (cx - w // 2, cy - h // 2, cx + w // 2, cy + h // 2)
+
     t0 = time.time()
     for cfg in configs:
         gate_cfg = {k: v for k, v in cfg.items() if k != "name"}
-        jobs = [(os.path.join(cases_dir, e["file"]), e["truth"], e["file"], gate_cfg)
-                for e in pos_sel + neg_sel]
+        jobs = [(os.path.join(cases_dir, e["file"]), e["truth"], e["file"], gate_cfg,
+                 e.get("name", ""), _bbox(e)) for e in pos_sel + neg_sel]
         if workers > 1:
             with mp.Pool(workers) as pool:
                 results = pool.map(_job_ocr_eval, jobs)
@@ -252,16 +277,25 @@ def run_ocr_tune(params, out_dir, scratch):
             results = [_job_ocr_eval(j) for j in jobs]
         pos = [r for r in results if r["truth"] == "text"]
         neg = [r for r in results if r["truth"] == "clean"]
-        rec = sum(1 for r in pos if r["pass"] is False)
-        fp = [r for r in neg if r["pass"] is False]
+        # 召回 = 正例被判 fail；误报 = 负例被判 fail
+        rec = sum(1 for r in pos if r["verdict"] == "fail")
+        fp = [r for r in neg if r["verdict"] == "fail"]
+        reasons = {}
+        for r in results:
+            reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
         report["configs"].append({
             "name": cfg.get("name", json.dumps(gate_cfg, ensure_ascii=False)),
             "config": gate_cfg,
             "recall": f"{rec}/{len(pos)}", "recall_pct": round(100 * rec / max(len(pos), 1), 1),
             "fp": f"{len(fp)}/{len(neg)}",
-            "missed": [r["label"] for r in pos if r["pass"] is not False],
-            "false_pos": [{"label": r["label"], "hits": r["hits"]} for r in fp],
+            "reason_hist": reasons,
+            "missed": [{"label": r["label"], "reason": r["reason"],
+                        "n_hits": (r["metrics"] or {}).get("n_hits")} for r in pos
+                       if r["verdict"] != "fail"],
+            "false_pos": [{"label": r["label"], "reason": r["reason"],
+                           "hits": [h["text"] for h in r["hits"]]} for r in fp],
             "ocr_sec_sum": round(sum(r["ocr_sec"] or 0 for r in results), 1),
+            "ocr_sec_max": round(max([r["ocr_sec"] or 0 for r in results] or [0]), 1),
             "errors": [r["error"] for r in results if r["error"]][:5],
         })
         report["wall_sec"] = round(time.time() - t0, 1)
@@ -285,6 +319,7 @@ def _job_ocr_regress(job):
     import pipeline as P
     import gate_lib as G
     import ocr_gate as OG
+    import gate_decision as GD
     t0 = time.time()
     rep = {"station_id": station_id, "station": station_name,
            "src": os.path.basename(src), "timings": {}}
@@ -311,8 +346,11 @@ def _job_ocr_regress(job):
         t = time.time()
         ocr_base = OG.ocr_scene_text(rgba, **gate_cfg)
         rep["timings"]["text_gate_ocr"] = round(time.time() - t, 2)
-        rep["ocr_base"] = {"n_hits": ocr_base["n_hits"], "pass": ocr_base["pass"],
-                           "hits": ocr_base["hits"][:6], "ocr_sec": ocr_base["ocr_sec"]}
+        vb, rb, mb = GD.classify(ocr_base, GD.load_config(), "", None, rgba)
+        rep["ocr_base"] = {"verdict": vb, "reason": rb, "n_hits": mb["n_hits"],
+                           "hits": [h["text"] for h in ocr_base["hits"][:6]],
+                           "prep_sha1": ocr_base["prep_sha1"],
+                           "ocr_sec": ocr_base["ocr_sec"]}
 
         t = time.time()
         tr = G.truncation(rgba)
@@ -332,12 +370,22 @@ def _job_ocr_regress(job):
         rep["timings"]["emboss"] = round(time.time() - t, 2)
         bt = P.band_text_check(final)
         ocr_final = OG.ocr_scene_text(final, **gate_cfg)
+        vf, rf, mf = GD.classify(ocr_final, GD.load_config(), "", None, final)
         rep["recheck"] = {"band_top": bt["top"], "band_bottom": bt["bottom"],
-                          "ocr_final_hits": ocr_final["n_hits"],
+                          "ocr_final_verdict": vf, "ocr_final_reason": rf,
+                          "ocr_final_hits": mf["n_hits"],
+                          "prep_sha1": ocr_final["prep_sha1"],
                           "pass": bool(bt["top"] >= 1 and bt["bottom"] >= 1
-                                       and ocr_final["pass"])}
-        rep["gate_all_pass"] = bool(rep["gate_circularity"] and ocr_base["pass"]
+                                       and vf == "pass")}
+        rep["gate_all_pass"] = bool(rep["gate_circularity"] and vb == "pass"
                                     and rep["gate_truncation"] and rep["gate_font"])
+        rep["fail_reasons"] = [x for x in [
+            None if rep["gate_circularity"] else "circularity",
+            rb if vb != "pass" else None,
+            None if rep["gate_truncation"] else "truncation",
+            None if rep["gate_font"] else "font_missing_glyph",
+            None if rep["recheck"]["pass"] else ("band_recheck:" + str(rf)),
+        ] if x]
         if keep_sample:
             rep["_final"] = final  # 仅首 job 留样，避免大数组过 pickle
     except Exception as e:
@@ -348,17 +396,21 @@ def _job_ocr_regress(job):
 
 
 def run_ocr_regress(params, out_dir, scratch):
-    """n 站回归：8 张原图轮换 + 站名分布取样，四道门禁 + 新旧文字门禁对照。"""
+    """8 图 × repeat 回归：四道门禁（新 OCR 文字门禁）+ 新旧文字门禁对照。"""
     workers = max(1, int(params.get("workers", 4)))
-    n = max(1, int(params.get("n_stations", 30)))
-    gate_cfg = params.get("gate") or {"scale": 0.5, "binarize": "otsu"}
+    repeat = max(1, int(params.get("repeat", 3)))
+    gate_cfg = params.get("gate") or {}
     stations = json.load(open(os.path.join(ROOT, "bench", "stations_cn.json")))
-    picks = [stations[i] for i in range(0, len(stations), len(stations) // n)][:n]
     inputs_dir = os.path.join(ROOT, "bench", "inputs")
     raws = sorted(f for f in os.listdir(inputs_dir)
-                  if f.lower().endswith((".jpg", ".jpeg", ".png")))
-    jobs = [(os.path.join(inputs_dir, raws[i % len(raws)]),
-             picks[i]["id"], picks[i]["name"], gate_cfg, i == 0) for i in range(n)]
+                  if f.lower().endswith((".jpg", ".jpeg", ".png")))[:8]
+    jobs, keys = [], []
+    for k in range(repeat):
+        for i, raw in enumerate(raws):
+            st = stations[(i * repeat + k) % len(stations)]
+            keys.append(f"{raw}#r{k}")
+            jobs.append((os.path.join(inputs_dir, raw), st["id"], st["name"],
+                         gate_cfg, (k == 0 and i == 0)))
 
     t0 = time.time()
     if workers > 1:
@@ -367,6 +419,8 @@ def run_ocr_regress(params, out_dir, scratch):
     else:
         results = [_job_ocr_regress(j) for j in jobs]
     wall = time.time() - t0
+    for key, r in zip(keys, results):
+        r["key"] = key
 
     sample_kept = False
     for r in results:
@@ -377,27 +431,37 @@ def run_ocr_regress(params, out_dir, scratch):
             sample_kept = True
     errs = [r for r in results if r["error"]]
     fp_rate = sum(1 for r in results if r["gate_all_pass"]) / max(len(results), 1)
+    gdcfg = GD.load_config()
     report = {
+        "ok": len(errs) == 0 and sum(1 for r in results if r["gate_all_pass"]) == len(results),
         "gate_config": gate_cfg,
-        "n_stations": n,
-        "raws_cycled": raws,
+        "n_images": len(raws),
+        "repeat": repeat,
+        "n_jobs": len(results),
+        "raws": raws,
+        "config_version": gdcfg["config_version"],
+        "config_sha256": gdcfg["_sha256"],
+        "thresholds": gdcfg["decision"],
         "wall_sec": round(wall, 2),
-        "throughput_station_per_sec": round(n / wall, 3) if wall > 0 else 0,
+        "throughput_job_per_sec": round(len(results) / wall, 3) if wall > 0 else 0,
         "first_pass_rate": round(fp_rate, 4),
         "first_pass_count": sum(1 for r in results if r["gate_all_pass"]),
         "gates": {
-            "circularity_fail": [r["station"] for r in results if not r.get("gate_circularity")],
-            "ocr_text_fail": [r["station"] for r in results
-                              if r.get("ocr_base", {}).get("pass") is False],
-            "old_text_fail": [r["station"] for r in results
+            "circularity_fail": [r["key"] for r in results if not r.get("gate_circularity")],
+            "ocr_text_fail": [{"key": r["key"], "reason": r["ocr_base"].get("reason")}
+                              for r in results
+                              if r.get("ocr_base", {}).get("verdict") == "fail"],
+            "old_text_fail": [r["key"] for r in results
                               if r.get("old_text_pass") is False],
-            "truncation_fail": [r["station"] for r in results
-                                if not r.get("gate_truncation")],
-            "font_fail": [r["station"] for r in results if not r.get("gate_font")],
+            "truncation_fail": [r["key"] for r in results if not r.get("gate_truncation")],
+            "font_fail": [r["key"] for r in results if not r.get("gate_font")],
+            "recheck_fail": [{"key": r["key"], "reason": r["recheck"].get("ocr_final_reason")}
+                             for r in results if not r["recheck"]["pass"]],
         },
         "avg_job_sec": round(sum(r["sec"] for r in results) / max(len(results), 1), 2),
         "jobs_failed": len(errs),
-        "stations": results,
+        "errors": [{"key": r["key"], "error": r["error"]} for r in errs],
+        "jobs": results,
     }
     with open(os.path.join(out_dir, "regress_report.json"), "w") as f:
         json.dump(report, f, ensure_ascii=False, indent=1)
@@ -454,7 +518,7 @@ def main():
                                   for c in report["configs"]]
         elif mode == "regress":
             report = run_ocr_regress(params, out_dir, scratch)
-            head = {k: v for k, v in report.items() if k != "stations"}
+            head = {k: v for k, v in report.items() if k != "jobs"}
         else:
             sys.exit(f"未知 mode: {mode}（tune/regress）")
         summary = {"task": args.task, "mode": mode, "params": params,
@@ -463,6 +527,11 @@ def main():
             json.dump(summary, f, ensure_ascii=False, indent=1)
         shutil.rmtree(scratch, ignore_errors=True)
         print(json.dumps(head, ensure_ascii=False))
+        # 不通过不静默：门禁失败或 job 异常 => 非零退出（产物已落盘，artifact if: always()）
+        if mode == "regress" and not report.get("ok"):
+            sys.exit("REGRESS_FAILED first_pass=%s/%s errors=%d reasons=%s" % (
+                report["first_pass_count"], report["n_jobs"], report["jobs_failed"],
+                {k: v for k, v in report["gates"].items() if v}))
         return
 
     jobs = [(os.path.join(inputs_dir, img), f"{os.path.splitext(img)[0]}_r{k}")

@@ -11,6 +11,7 @@ bbox 与场景掩膜重叠 >=50% 的词 => 命中；命中数>0 => 门禁不通�
 
 CLI: python3 ocr_gate.py IMG.png [--json '{"psm":11,...}']
 """
+import hashlib
 import json
 import sys
 
@@ -36,6 +37,8 @@ except ImportError:  # 独立运行（如云端只带本文件）
 DEFAULTS = {
     "lang": "jpn+eng",
     "psm": 11,
+    "oem": 1,              # 仅 LSTM 引擎（3=both 约慢一倍）
+    "extra": "-c tessedit_do_invert=0",
     "conf_thr": 60.0,
     "scale": 1.0,          # <1 降采样 / 2 即"放大 2x"
     "binarize": None,      # None | "otsu" | "adaptive"
@@ -120,20 +123,22 @@ def ocr_scene_text(rgba, **cfg):
     gray, x0, y0 = prepare_gray(rgba, scale=c["scale"], binarize=c["binarize"],
                                 mask_out=c["mask_out"], crop=c["crop"])
     _, ins = _scene_bbox()
+    prep_sha1 = hashlib.sha1(gray.tobytes()).hexdigest()[:16]
     t0 = time.time()
     d = pytesseract.image_to_data(gray, lang=c["lang"],
-                                  config=f"--psm {c['psm']}",
+                                  config=f"--psm {c['psm']} --oem {c['oem']} {c['extra']}",
                                   output_type=pytesseract.Output.DICT)
     ocr_sec = time.time() - t0
     sc = c["scale"]
     hits = []
+    weak = []   # conf 在 [conf_weak, conf_thr) 的词：用于区分"缺字"与"对比度不足"
     for i, txt in enumerate(d["text"]):
         try:
             conf = float(d["conf"][i])
         except (ValueError, TypeError):
             conf = -1.0
         txt = (txt or "").strip()
-        if not txt or conf < c["conf_thr"]:
+        if not txt or conf < c.get("conf_weak", 35.0):
             continue
         x, y, w, h = d["left"][i], d["top"][i], d["width"][i], d["height"][i]
         # 还原到 2048 原图坐标
@@ -145,10 +150,15 @@ def ocr_scene_text(rgba, **cfg):
         sub = ins[oy0:oy1, ox0:ox1]
         if sub.size == 0:
             continue
-        if float(sub.mean()) >= c["min_overlap"]:
-            hits.append({"text": txt, "conf": round(conf, 1),
-                         "bbox": [ox0, oy0, ox1 - ox0, oy1 - oy0]})
-    return {"n_hits": len(hits), "hits": hits, "pass": len(hits) == 0,
+        item = {"text": txt, "conf": round(conf, 1),
+                "bbox": [ox0, oy0, ox1 - ox0, oy1 - oy0],
+                "inside_frac": round(float(sub.mean()), 3)}
+        if conf >= c["conf_thr"]:
+            hits.append(item)
+        else:
+            weak.append(item)
+    return {"n_hits": len(hits), "hits": hits, "n_weak": len(weak), "weak": weak,
+            "pass": len(hits) == 0, "prep_sha1": prep_sha1,
             "config": {k: c[k] for k in DEFAULTS}, "ocr_sec": round(ocr_sec, 2)}
 
 
