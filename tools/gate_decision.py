@@ -16,6 +16,7 @@ evaluate() 必定返回 verdict∈{pass,fail}；异常路径由调用方记 erro
 import hashlib
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -37,6 +38,7 @@ def load_config(path=None):
     cfg = json.loads(raw.decode("utf-8"))
     for sec, keys in (("ocr", ("lang", "psm", "conf_hit")),
                       ("preprocess", ("scale", "binarize")),
+                      ("base_clean", ("min_word_conf", "min_word_len")),
                       ("decision", ("pass_min_char_coverage",
                                     "substitution_max_char_mismatch",
                                     "low_contrast_rms_min",
@@ -58,6 +60,7 @@ def ocr_cfg_from(cfg):
             "extra": o.get("extra", ""), "conf_thr": float(o["conf_hit"]),
             "conf_weak": float(o.get("conf_weak", 35)),
             "scale": float(p["scale"]), "binarize": p["binarize"],
+            "denoise": int(p.get("denoise", 0)),
             "mask_out": bool(p["mask_out_scene"]),
             "crop": bool(p["crop_to_scene"]),
             "min_overlap": float(p["min_overlap"])}
@@ -158,6 +161,46 @@ def rect_geometry(bbox):
     return {"band_frac": round(float((in_band & in_circle).sum()) / px, 3),
             "outside_frac": round(float((~in_circle).sum()) / px, 3),
             "rect_px": px}
+
+
+_WORD_RE = re.compile(r"^[0-9A-Za-z\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]+$")
+
+
+def filter_hits(hits, f):
+    """词有效性过滤：把照片纹理产生的符号噪声（=, >, |, ¢, 单字母）剔掉。
+
+    参数全部来自配置 base_clean 段：
+      min_word_conf     conf 下限（噪声词置信通常 60~72，合成字 85+）
+      min_word_len      最短词长（站名 >=3 字）
+      min_glyph_h_px    命中原图字高下限（排除纹理碎斑）
+      min_width_frac    命中宽度占场景宽比例下限（排除小碎块）
+      scene_w           场景宽（原图 px）
+    """
+    out = []
+    for h in hits:
+        t = (h.get("text") or "").strip()
+        if len(t) < int(f.get("min_word_len", 2)):
+            continue
+        if not _WORD_RE.match(t):
+            continue
+        if float(h.get("conf", 0)) < float(f.get("min_word_conf", 60)):
+            continue
+        if h["bbox"][3] < int(f.get("min_glyph_h_px", 0)):
+            continue
+        if f.get("scene_w"):
+            frac = h["bbox"][2] / float(f["scene_w"])
+            if frac < float(f.get("min_width_frac", 0)):
+                continue
+        out.append(h)
+    return out
+
+
+def base_clean_verdict(hits, f):
+    """底图无字门禁：过滤后仍有词 => unexpected_text(fail)，否则 pass。"""
+    kept = filter_hits(hits, f)
+    if kept:
+        return "fail", "unexpected_text", [h["text"] for h in kept[:6]]
+    return "pass", None, []
 
 
 def classify(ocr, cfg, expected_text="", expected_bbox=None, rgba=None):

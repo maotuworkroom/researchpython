@@ -10,10 +10,17 @@
   },
   "preprocess": {
     "crop_to_scene": true,
-    "scale": 0.5,
-    "binarize": "otsu",
+    "scale": 0.35,
+    "denoise": 3,
+    "binarize": null,
     "mask_out_scene": true,
     "min_overlap": 0.5
+  },
+  "base_clean": {
+    "min_word_conf": 75,
+    "min_word_len": 3,
+    "min_glyph_h_px": 0,
+    "min_width_frac": 0.0
   },
   "decision": {
     "pass_min_char_coverage": 0.6,

@@ -44,6 +44,7 @@ DEFAULTS = {
     "binarize": None,      # None | "otsu" | "adaptive"
     "mask_out": True,      # 把场景掩膜外置白，减少干扰
     "crop": True,          # 裁到场景 bbox 再 OCR（掩膜外本就无有效内容）
+    "denoise": 0,          # 中值模糊核（0=关）；抑制照片纹理碎斑，psm11 提速
     "min_overlap": 0.5,    # 命中 bbox 与掩膜重叠比例阈值
 }
 
@@ -73,7 +74,7 @@ def _scene_bbox():
     return _BBOX, _INS
 
 
-def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True):
+def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True, denoise=0):
     """RGBA -> 灰度预处理图（tesseract 输入）。纯数值，本地可复算。
     返回 (gray, x0, y0)：x0/y0 为裁切偏移（命中坐标还原用）。"""
     rgb = rgba[:, :, :3]
@@ -95,6 +96,8 @@ def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True):
         interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
         gray = cv2.resize(gray, (max(1, int(w * scale)), max(1, int(h * scale))),
                           interpolation=interp)
+    if denoise and denoise > 1:
+        gray = cv2.medianBlur(gray, int(denoise) | 1)
     if binarize == "otsu":
         _, gray = cv2.threshold(gray, 0, 255,
                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -121,7 +124,8 @@ def ocr_scene_text(rgba, **cfg):
     if "upscale" in cfg and cfg["upscale"]:  # 旧参数兼容
         c["scale"] = float(cfg["upscale"])
     gray, x0, y0 = prepare_gray(rgba, scale=c["scale"], binarize=c["binarize"],
-                                mask_out=c["mask_out"], crop=c["crop"])
+                                mask_out=c["mask_out"], crop=c["crop"],
+                                denoise=c.get("denoise", 0))
     _, ins = _scene_bbox()
     prep_sha1 = hashlib.sha1(gray.tobytes()).hexdigest()[:16]
     t0 = time.time()

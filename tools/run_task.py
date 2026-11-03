@@ -148,16 +148,24 @@ def _job_colornorm(job):
 
 # ---------------- stamp-ocr-gate（tesseract 文字门禁） ----------------
 
-# tune 缺省网格：psm=11 / lang=jpn+eng / conf>=60 固定，只变预处理。
-# 实测代价（本机连通域数值 + 云端 ocr_sec）：
-#   gray@0.5   最快（~0.2s/图）
-#   otsu@0.5   中等
-#   adaptive   连通域 9532（827 个碎斑）→ psm11 稀疏模式极慢，已剔除
-#   scale=1.0  4 倍像素 → 慢 4 倍，仅作可选档
+# tune 缺省 OCR 预处理（单档，实测最省时）：裁场景 bbox + 0.35 降采样 + 3x3 中值去斑。
+#   adaptive 二值化连通域 9532（psm11 稀疏模式病态慢）→ 不用；scale=1.0 慢 4 倍 → 不用。
 DEFAULT_TUNE_GRID = [
-    {"name": "g50", "scale": 0.5},
-    {"name": "o50", "scale": 0.5, "binarize": "otsu"},
-    {"name": "g35", "scale": 0.35},
+    {"name": "g35d3", "scale": 0.35, "denoise": 3},
+]
+
+# 词有效性过滤网格：OCR 只跑一遍，过滤参数在聚合层扫（写死阈值候选，最终值进配置）
+FILTER_GRID = [
+    {"name": "raw_conf60", "min_word_conf": 60, "min_word_len": 1},
+    {"name": "len2_c60", "min_word_conf": 60, "min_word_len": 2},
+    {"name": "len3_c60", "min_word_conf": 60, "min_word_len": 3},
+    {"name": "len3_c75", "min_word_conf": 75, "min_word_len": 3},
+    {"name": "len3_c75_h30", "min_word_conf": 75, "min_word_len": 3,
+     "min_glyph_h_px": 30},
+    {"name": "len2_c75_w04", "min_word_conf": 75, "min_word_len": 2,
+     "min_width_frac": 0.04},
+    {"name": "len3_c80_h40", "min_word_conf": 80, "min_word_len": 3,
+     "min_glyph_h_px": 40},
 ]
 
 NOTO_FONT_PATHS = [
@@ -167,7 +175,7 @@ NOTO_FONT_PATHS = [
 
 
 def _job_ocr_eval(job):
-    """单图 OCR 门禁评估（对照集 tune 用）：走 gate_decision 出 verdict+reason。"""
+    """单图 OCR（tune 用）：只跑一次 OCR，返回原始命中，过滤/判定放到聚合层扫网格。"""
     path, truth, label, gate_cfg, expected_text, expected_bbox = job
     import numpy as np
     from PIL import Image
@@ -178,22 +186,25 @@ def _job_ocr_eval(job):
     err, res = None, None
     try:
         rgba = np.array(Image.open(path).convert("RGBA"))
-        cfg2 = dict(cfg)
         og = dict(GD.ocr_cfg_from(cfg))
         og.update({k: v for k, v in gate_cfg.items() if v is not None})
         ocr = OG.ocr_scene_text(rgba, **og)
-        verdict, reason, metrics = GD.classify(ocr, cfg2, expected_text,
-                                               expected_bbox, rgba)
-        res = {"verdict": verdict, "reason": reason, "metrics": metrics,
-               "ocr_sec": ocr["ocr_sec"], "hits": ocr["hits"][:6]}
+        res = {"prep_sha1": ocr["prep_sha1"], "ocr_sec": ocr["ocr_sec"],
+               "hits": [{"text": h["text"], "conf": h["conf"],
+                         "bbox": h["bbox"], "inside_frac": h["inside_frac"]}
+                        for h in ocr["hits"]],
+               "n_weak": ocr["n_weak"],
+               "rms": GD.region_metrics(rgba, expected_bbox, 40.0)["rms"]
+               if expected_bbox else None}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
     return {"label": label, "truth": truth, "sec": round(time.time() - t0, 2),
-            "error": err,
-            "verdict": res["verdict"] if res else None,
-            "reason": res["reason"] if res else None,
-            "metrics": res["metrics"] if res else None,
+            "error": err, "expected_text": expected_text,
+            "expected_bbox": expected_bbox,
             "hits": res["hits"] if res else [],
+            "n_weak": res["n_weak"] if res else None,
+            "rms": res["rms"] if res else None,
+            "prep_sha1": res["prep_sha1"] if res else None,
             "ocr_sec": res["ocr_sec"] if res else None,
             "config_version": cfg["config_version"], "config_sha256": cfg["_sha256"]}
 
@@ -268,41 +279,55 @@ def run_ocr_tune(params, out_dir, scratch):
         return (cx - w // 2, cy - h // 2, cx + w // 2, cy + h // 2)
 
     t0 = time.time()
-    for cfg in configs:
-        gate_cfg = {k: v for k, v in cfg.items() if k != "name"}
-        jobs = [(os.path.join(cases_dir, e["file"]), e["truth"], e["file"], gate_cfg,
-                 e.get("name", ""), _bbox(e)) for e in pos_sel + neg_sel]
-        if workers > 1:
-            with mp.Pool(workers) as pool:
-                results = pool.map(_job_ocr_eval, jobs)
-        else:
-            results = [_job_ocr_eval(j) for j in jobs]
-        pos = [r for r in results if r["truth"] == "text"]
-        neg = [r for r in results if r["truth"] == "clean"]
-        # 召回 = 正例被判 fail；误报 = 负例被判 fail
-        rec = sum(1 for r in pos if r["verdict"] == "fail")
-        fp = [r for r in neg if r["verdict"] == "fail"]
-        reasons = {}
-        for r in results:
-            reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
+    gate_cfg = {k: v for k, v in configs[0].items() if k != "name"}
+    report["ocr_config"] = gate_cfg
+    report["filter_grid"] = FILTER_GRID
+    jobs = [(os.path.join(cases_dir, e["file"]), e["truth"], e["file"], gate_cfg,
+             e.get("name", ""), _bbox(e)) for e in pos_sel + neg_sel]
+    # OCR 只跑一遍；过滤参数在聚合层扫网格（一次云端跑出整条调参曲线）
+    if workers > 1:
+        with mp.Pool(workers) as pool:
+            results = pool.map(_job_ocr_eval, jobs)
+    else:
+        results = [_job_ocr_eval(j) for j in jobs]
+    report["ocr_pass"] = {
+        "sec_sum": round(sum(r["ocr_sec"] or 0 for r in results), 1),
+        "sec_max": round(max([r["ocr_sec"] or 0 for r in results] or [0]), 1),
+        "sec_mean": round(sum(r["ocr_sec"] or 0 for r in results)
+                          / max(len(results), 1), 2),
+        "errors": [r["error"] for r in results if r["error"]][:5],
+    }
+    import gate_decision as GD
+    import ocr_gate as OG
+    scene_w = OG._scene_bbox()[0][2] - OG._scene_bbox()[0][0]
+    pos = [r for r in results if r["truth"] == "text"]
+    neg = [r for r in results if r["truth"] == "clean"]
+    for i, f in enumerate(FILTER_GRID):
+        f2 = dict(f, scene_w=scene_w)
+        pos_fail = [r for r in pos if GD.base_clean_verdict(r["hits"], f2)[0] == "fail"]
+        neg_fail = [r for r in neg if GD.base_clean_verdict(r["hits"], f2)[0] == "fail"]
         report["configs"].append({
-            "name": cfg.get("name", json.dumps(gate_cfg, ensure_ascii=False)),
-            "config": gate_cfg,
-            "recall": f"{rec}/{len(pos)}", "recall_pct": round(100 * rec / max(len(pos), 1), 1),
-            "fp": f"{len(fp)}/{len(neg)}",
-            "reason_hist": reasons,
-            "missed": [{"label": r["label"], "reason": r["reason"],
-                        "n_hits": (r["metrics"] or {}).get("n_hits")} for r in pos
-                       if r["verdict"] != "fail"],
-            "false_pos": [{"label": r["label"], "reason": r["reason"],
-                           "hits": [h["text"] for h in r["hits"]]} for r in fp],
-            "ocr_sec_sum": round(sum(r["ocr_sec"] or 0 for r in results), 1),
-            "ocr_sec_max": round(max([r["ocr_sec"] or 0 for r in results] or [0]), 1),
-            "errors": [r["error"] for r in results if r["error"]][:5],
+            "name": f.get("name") or f"f{i}",
+            "filter": {k: v for k, v in f.items() if k != "name"},
+            "recall": f"{len(pos_fail)}/{len(pos)}",
+            "recall_pct": round(100 * len(pos_fail) / max(len(pos), 1), 1),
+            "fp": f"{len(neg_fail)}/{len(neg)}",
+            "missed": [{"label": r["label"],
+                        "n_hits": len(r["hits"]),
+                        "kept": [h["text"] for h in GD.filter_hits(r["hits"], f2)]}
+                       for r in pos if GD.base_clean_verdict(r["hits"], f2)[0] != "fail"],
+            "false_pos": [{"label": r["label"],
+                           "kept": [h["text"] for h in GD.filter_hits(r["hits"], f2)]}
+                          for r in neg_fail],
         })
         report["wall_sec"] = round(time.time() - t0, 1)
-        with open(os.path.join(out_dir, "tune_report.json"), "w") as f:
-            json.dump(report, f, ensure_ascii=False, indent=1)  # 逐组落盘防超时丢失
+        with open(os.path.join(out_dir, "tune_report.json"), "w") as fh:
+            json.dump(report, fh, ensure_ascii=False, indent=1)  # 逐组落盘防超时丢失
+    # 命中原始数据（供本机复核与 RESULT 里贴证据）
+    with open(os.path.join(out_dir, "ocr_hits.json"), "w") as fh:
+        json.dump([{k: r[k] for k in ("label", "truth", "prep_sha1", "ocr_sec",
+                                      "hits", "n_weak", "rms", "error")}
+                   for r in results], fh, ensure_ascii=False, indent=1)
     # 样图：1 正 1 负，供人工抽查
     for src, dst in ((os.path.join(cases_dir, mani["positives"][0]["file"]),
                       os.path.join(out_dir, "sample_positive.png")),
