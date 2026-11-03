@@ -141,6 +141,19 @@ def _clip(b):
     return x0, y0, x1, y1
 
 
+def expand_box(box_xywh, frac=0.15):
+    """[x,y,w,h] -> (x0,y0,x1,y1)：按宽高比例外扩，供 OCR 紧贴裁切（色带用）。
+
+    以 pipeline.text_box 的同字体复算字框为基准，外扩 frac 后作为 tesseract 的输入窗口：
+    既去掉满幅留白（psm 7 单行模式在大片空白上会放弃识别），又给字缘留出落笔余量。
+    """
+    if not box_xywh:
+        return None
+    x, y, w, h = [int(v) for v in box_xywh]
+    px, py = int(round(w * frac)), int(round(h * frac))
+    return _clip((x - px, y - py, x + w + px, y + h + py))
+
+
 def rect_geometry(bbox, region="scene"):
     """字形矩形相对"圆盘"与"区域掩膜"的解析几何（纯坐标，不依赖 OCR）。"""
     x0, y0, x1, y1 = _clip(bbox)

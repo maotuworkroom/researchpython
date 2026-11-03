@@ -420,11 +420,15 @@ def _job_ocr_regress(job):
         t = time.time()
         exp_bottom = P.text_box(rgba, station_name, False)
         exp_top = P.text_box(rgba, "JR", True)
-        ocr_final = OG.ocr_scene_text(final, region="band_bottom",
+        # 色带 OCR 的输入窗口：期望字框外扩 band_crop_expand（去满幅留白，psm 7 才稳定识别）
+        bexp = float(cfg["preprocess"].get("band_crop_expand", 0.15))
+        win_bottom = GD.expand_box(exp_bottom, bexp)
+        win_top = GD.expand_box(exp_top, bexp)
+        ocr_final = OG.ocr_scene_text(final, region="band_bottom", bbox=win_bottom,
                                       **GD.ocr_cfg_from(cfg, "band_bottom"))
         vf, rf, mf = GD.classify(ocr_final, cfg, station_name, "band_bottom", final,
                                  expected_bbox=exp_bottom)
-        ocr_brand = OG.ocr_scene_text(final, region="band_top",
+        ocr_brand = OG.ocr_scene_text(final, region="band_top", bbox=win_top,
                                       **GD.ocr_cfg_from(cfg, "band_top"))
         vbrand, rbrand, mbrand = GD.classify(ocr_brand, cfg, "JR", "band_top", final,
                                             expected_bbox=exp_top)
@@ -571,11 +575,14 @@ def _job_defect(job):
     err, res = None, None
     try:
         rgba = np.array(Image.open(path).convert("RGBA"))
-        bcfg = GD.ocr_cfg_from(cfg, "band_bottom")
-        bcfg.update({k: v for k, v in (gate_cfg or {}).items() if v is not None})
-        ocr = OG.ocr_scene_text(rgba, region="band_bottom", **bcfg)
         import pipeline as P
         exp_box = P.text_box(rgba, station, False)
+        bcfg = GD.ocr_cfg_from(cfg, "band_bottom")
+        bcfg.update({k: v for k, v in (gate_cfg or {}).items() if v is not None})
+        ocr = OG.ocr_scene_text(rgba, region="band_bottom",
+                                bbox=GD.expand_box(
+                                    exp_box, float(cfg["preprocess"].get(
+                                        "band_crop_expand", 0.15))), **bcfg)
         v, r, m = GD.classify(ocr, cfg, station, "band_bottom", rgba,
                               expected_bbox=exp_box)
         res = {"verdict": v, "reason": r,

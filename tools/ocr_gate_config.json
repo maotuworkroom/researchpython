@@ -1,5 +1,5 @@
 {
-  "config_version": "2026-11-03.5",
+  "config_version": "2026-11-03.6",
   "ocr": {
     "lang": "jpn+eng",
     "psm": 11,
@@ -18,7 +18,8 @@
     "band_denoise": 0,
     "band_mask_out": true,
     "min_overlap": 0.5,
-    "band_psm": 7
+    "band_psm": 7,
+    "band_crop_expand": 0.15
   },
   "base_clean": {
     "min_word_conf": 60,
@@ -85,6 +86,7 @@
     },
     "chosen_base_clean": "len2_c60_h30_a20（同 FP 下召回最高）；fp<=1/20 未达标 -> 场景字检查降为 advisory（只上报不阻断）",
     "hard_gate": "band_top/band_bottom 嵌字完整性（5 类原因）",
-    "scale_note": "0.35+denoise3 档召回崩塌（3/30），已废弃；最终 scale=0.5, denoise=0"
+    "scale_note": "0.35+denoise3 档召回崩塌（3/30），已废弃；最终 scale=0.5, denoise=0",
+    "band_crop_note": "band_crop_expand=0.15：色带 OCR 输入不裁满幅色带，而是按 pipeline.text_box 复算的期望字框外扩 15% 后裁切。满幅色带（宽>高 6 倍且两侧大片留白）会让 psm 7 整幅放弃识别（good_00/04/05 曾 hits=[]）。该值改动同样必须 bump config_version。"
   }
 }

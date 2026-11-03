@@ -103,14 +103,25 @@ def _scene_bbox():
     return region_geom("scene")
 
 
+def _clip_win(bbox):
+    """(x0,y0,x1,y1) 裁切窗口 -> 原图范围内合法窗口（退化时回退整幅）。"""
+    x0, y0, x1, y1 = [int(v) for v in bbox]
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(SIZE, x1), min(SIZE, y1)
+    if x1 <= x0 or y1 <= y0:
+        return 0, 0, SIZE, SIZE
+    return x0, y0, x1, y1
+
+
 def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
-                 denoise=0, region="scene"):
+                 denoise=0, region="scene", bbox=None):
     """RGBA -> 灰度预处理图（tesseract 输入）。纯数值，本地可复算。
     返回 (gray, x0, y0)：x0/y0 为裁切偏移（命中坐标还原用）。
 
     色带区域（band_*）额外两条归一化，避免"白字 + 白色角落"糊成一片：
       1) 极性归一：带内中位灰度 < 128 时整体取反，保证"深字浅底"；
       2) 掩膜外填充用带底色（而不是白），避免白角与白字混为一体。
+    bbox: (x0,y0,x1,y1) 裁切窗口；None = 用区域 bbox（scene 门禁走这条）。
     """
     rgb = rgba[:, :, :3]
     alpha = rgba[:, :, 3]
@@ -118,7 +129,10 @@ def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
     m = alpha > 127
     img[m] = rgb[m]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    (bx0, by0, bx1, by1), ins = region_geom(region)
+    (rx0, ry0, rx1, ry1), ins = region_geom(region)
+    # bbox=(x0,y0,x1,y1) 给出的"期望字框"优先：紧贴字框裁切，去掉满幅色带的
+    # 大片留白（psm 7 单行模式在宽 > 高 6 倍以上的空白上会整幅放弃识别）。
+    bx0, by0, bx1, by1 = _clip_win(bbox) if bbox is not None else (rx0, ry0, rx1, ry1)
     is_band = region.startswith("band_")
     if is_band:
         med = float(np.median(gray[ins])) if ins.any() else 255.0
@@ -159,11 +173,11 @@ def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
 
 
 def prep_fingerprint(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
-                     denoise=0, region="scene"):
+                     denoise=0, region="scene", bbox=None):
     """OCR 输入图的指纹（shape/crop/mean/std/otsu/sha1）。本机与云端共用同一函数，
     用于证明"喂给 tesseract 的是同一张图"（本机无 tesseract 时的逐项一致性依据）。"""
     gray, x0, y0 = prepare_gray(rgba, scale=scale, binarize=binarize, mask_out=mask_out,
-                                crop=crop, denoise=denoise, region=region)
+                                crop=crop, denoise=denoise, region=region, bbox=bbox)
     thr, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return {"shape": list(gray.shape), "crop_xy": [int(x0), int(y0)],
             "mean": round(float(gray.mean()), 2), "std": round(float(gray.std()), 2),
@@ -179,10 +193,11 @@ def geom_report():
             "band_bottom_bbox": list(region_geom("band_bottom")[0])}
 
 
-def ocr_scene_text(rgba, region="scene", **cfg):
+def ocr_scene_text(rgba, region="scene", bbox=None, **cfg):
     """OCR 文字门禁。返回 {n_hits, hits[], pass, config, ocr_sec}。
 
     region: scene（底图无字门禁）/ band_top（品牌名）/ band_bottom（站名）。
+    bbox:   (x0,y0,x1,y1) 紧贴期望字框裁切（色带用），None 时按区域 bbox 裁。
     """
     if not HAVE_TESS:
         raise RuntimeError("pytesseract 不可用（本机不装，云端 runner 才有）")
@@ -193,7 +208,7 @@ def ocr_scene_text(rgba, region="scene", **cfg):
         c["scale"] = float(cfg["upscale"])
     gray, x0, y0 = prepare_gray(rgba, scale=c["scale"], binarize=c["binarize"],
                                 mask_out=c["mask_out"], crop=c["crop"],
-                                denoise=c.get("denoise", 0), region=region)
+                                denoise=c.get("denoise", 0), region=region, bbox=bbox)
     _, ins = region_geom(region)
     prep_sha1 = hashlib.sha1(gray.tobytes()).hexdigest()[:16]
     t0 = time.time()
