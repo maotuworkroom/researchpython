@@ -168,6 +168,7 @@ def ink_metrics(rgba, region="band_bottom", region_bbox=None, ink_dev_thr=40.0,
       window              统计窗口
     """
     gray = gray_full(rgba)
+    alpha_ok = rgba[:, :, 3] > 127        # 印章本体（圆内 + 落在色带外的字）才可能是墨迹
     reg = OG.region_geom(region)[1]
     circ = circle_mask()
     box = _clip(region_bbox or OG.region_geom(region)[0])
@@ -179,8 +180,9 @@ def ink_metrics(rgba, region="band_bottom", region_bbox=None, ink_dev_thr=40.0,
     rms = float(gray[reg].std()) if reg.any() else 0.0
     med = float(np.median(gray[reg])) if reg.any() else 255.0
     g = gray[wy0:wy1, wx0:wx1]
-    hard = (np.abs(g.astype(np.int16) - med) > ink_dev_thr)
-    soft = (np.abs(g.astype(np.int16) - med) > ink_dev_soft)
+    ok = alpha_ok[wy0:wy1, wx0:wx1]
+    hard = (np.abs(g.astype(np.int16) - med) > ink_dev_thr) & ok
+    soft = (np.abs(g.astype(np.int16) - med) > ink_dev_soft) & ok
     n, labels, stats, _ = cv2.connectedComponentsWithStats(hard.astype(np.uint8), 8)
     reg_sub = reg[wy0:wy1, wx0:wx1]
     circ_sub = circ[wy0:wy1, wx0:wx1]

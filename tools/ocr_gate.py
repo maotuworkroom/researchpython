@@ -106,7 +106,12 @@ def _scene_bbox():
 def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
                  denoise=0, region="scene"):
     """RGBA -> 灰度预处理图（tesseract 输入）。纯数值，本地可复算。
-    返回 (gray, x0, y0)：x0/y0 为裁切偏移（命中坐标还原用）。"""
+    返回 (gray, x0, y0)：x0/y0 为裁切偏移（命中坐标还原用）。
+
+    色带区域（band_*）额外两条归一化，避免"白字 + 白色角落"糊成一片：
+      1) 极性归一：带内中位灰度 < 128 时整体取反，保证"深字浅底"；
+      2) 掩膜外填充用带底色（而不是白），避免白角与白字混为一体。
+    """
     rgb = rgba[:, :, :3]
     alpha = rgba[:, :, 3]
     img = np.full((SIZE, SIZE, 3), 255, np.uint8)   # 透明处置白
@@ -114,8 +119,17 @@ def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
     img[m] = rgb[m]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     (bx0, by0, bx1, by1), ins = region_geom(region)
+    is_band = region.startswith("band_")
+    if is_band:
+        med = float(np.median(gray[ins])) if ins.any() else 255.0
+        if med < 128:
+            gray = 255 - gray          # 极性归一：深底白字 -> 浅底深字
     if mask_out:
-        gray[~ins] = 255
+        if is_band:
+            fill = int(np.median(gray[ins])) if ins.any() else 255
+            gray[~ins] = fill           # 用底色填掩膜外，保持整幅"纯色带 + 字"
+        else:
+            gray[~ins] = 255
     if crop:
         gray = gray[by0:by1, bx0:bx1]
         ins_c = ins[by0:by1, bx0:bx1]
