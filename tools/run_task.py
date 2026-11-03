@@ -443,7 +443,8 @@ def _job_ocr_regress(job):
             "station_metrics": {k: mf.get(k) for k in
                                 ("char_recall", "char_precision", "mismatch",
                                  "ink_px", "rms", "ink_region_outside_frac",
-                                 "ink_circle_outside_frac", "ink_bbox")},
+                                 "ink_circle_outside_frac", "ink_bbox",
+                                 "width_ratio", "text_contrast", "template")},
             "brand_verdict": vbrand, "brand_reason": rbrand,
             "brand_hits": [h["text"] for h in ocr_brand["hits"][:6]],
             "prep_sha1_bottom": ocr_final["prep_sha1"],
@@ -590,7 +591,8 @@ def _job_defect(job):
                "metrics": {k: m.get(k) for k in
                            ("char_recall", "char_precision", "mismatch", "ink_px",
                             "ink_soft_px", "rms", "ink_region_outside_frac",
-                            "ink_circle_outside_frac", "ink_bbox")},
+                            "ink_circle_outside_frac", "ink_bbox", "width_ratio",
+                            "height_ratio", "text_contrast", "template")},
                "prep_sha1": ocr["prep_sha1"], "ocr_sec": ocr["ocr_sec"]}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"

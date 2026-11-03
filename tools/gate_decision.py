@@ -42,11 +42,12 @@ def load_config(path=None):
                       ("base_clean", ("min_word_conf", "min_word_len")),
                       ("decision", ("pass_min_char_coverage",
                                     "substitution_max_char_mismatch",
-                                    "low_contrast_rms_min",
                                     "circle_outside_max",
                                     "ink_outside_max",
-                                    "min_ink_px",
-                                    "ink_dev_thr"))):
+                                    "ink_dev_thr",
+                                    "text_contrast_min",
+                                    "glyph_cov_min",
+                                    "glyph_ink_min"))):
         miss = [k for k in keys if k not in cfg.get(sec, {})]
         if miss:
             raise ValueError(f"配置缺字段 {sec}.{miss}")
@@ -236,6 +237,67 @@ def region_rms(rgba, region="scene"):
     return round(float(gray_full(rgba)[reg].std()), 1)
 
 
+def text_contrast(rgba, bbox_xywh, soft=12.0):
+    """期望字框内的前景/背景灰度差（确定性像素度量，用于判"对比度不足"）。
+
+    bbox_xywh = [x,y,w,h]（与 pipeline.text_box 同口径）。
+    以框内灰度中位数为背景，取"偏离背景 > soft"的像素为墨迹，返回墨迹中位灰度与
+    背景之差。不依赖 OCR 是否读得出，故不受 tesseract 偶发成败影响。
+    """
+    if not bbox_xywh:
+        return 0.0
+    x, y, w, h = [int(v) for v in bbox_xywh]
+    x0, y0, x1, y1 = _clip((x, y, x + w, y + h))
+    gray = gray_full(rgba)
+    ok = rgba[:, :, 3] > 127
+    g = gray[y0:y1, x0:x1].astype(np.int16)
+    m = ok[y0:y1, x0:x1]
+    if g.size == 0 or not m.any():
+        return 0.0
+    vals = g[m]
+    bg = float(np.median(vals))
+    ink = vals[np.abs(vals - bg) > soft]
+    if ink.size < 32:
+        return 0.0
+    return round(float(abs(np.median(ink) - bg)), 1)
+
+
+def ink_mask(rgba, region, dev=40.0):
+    """区域内的实际墨迹掩膜（以区域内灰度为背景，偏离 > dev 且不透明）。"""
+    gray = gray_full(rgba)
+    reg = OG.region_geom(region)[1]
+    bg = float(np.median(gray[reg])) if reg.any() else 255.0
+    return (np.abs(gray.astype(np.int16) - bg) > dev) & (rgba[:, :, 3] > 127)
+
+
+def glyph_template(rgba, text, top=False, region="band_bottom", dev=40.0):
+    """逐字模板比对：期望字迹（同字体同拟合复算） vs 实际墨迹（确定性，不依赖 OCR）。
+
+    每个期望字给出 coverage（期望笔画被实际墨迹覆盖的比例）与 precision
+    （该字框内实际墨迹落在期望笔画上的比例）：
+      缺字    -> 该字 ink_px≈0，coverage≈0
+      错字    -> 该字 ink_px 正常，但覆盖/精确都低（字形不在期望笔画上）
+    """
+    import pipeline as P
+    exp, cells = P.text_mask(text, top)
+    act = ink_mask(rgba, region, dev)
+    per = []
+    for ch, (x, y, w, h) in zip(text, cells):
+        x0, y0, x1, y1 = _clip((x, y, x + w, y + h))
+        e = exp[y0:y1, x0:x1]
+        a = act[y0:y1, x0:x1]
+        ep, ap = int(e.sum()), int(a.sum())
+        ov = int((e & a).sum())
+        per.append({"ch": ch, "box": [x0, y0, x1 - x0, y1 - y0], "exp_px": ep,
+                    "ink_px": ap,
+                    "coverage": round(ov / ep, 3) if ep else 1.0,
+                    "precision": round(ov / ap, 3) if ap else 0.0})
+    return {"cells": per,
+            "min_coverage": min([c["coverage"] for c in per] or [1.0]),
+            "min_precision": min([c["precision"] for c in per] or [1.0]),
+            "ink_px": sum(c["ink_px"] for c in per)}
+
+
 def filter_hits(hits, f):
     """词有效性过滤：把照片纹理产生的符号噪声（=, >, |, ¢, 单字母）剔掉。
 
@@ -304,12 +366,23 @@ def classify(ocr, cfg, expected_text="", region="scene", rgba=None, expected_bbo
             rgba, region, ink_dev_thr=float(d["ink_dev_thr"]),
             ink_dev_soft=float(d.get("ink_dev_soft", 12.0)),
             margin=int(d.get("ink_margin_px", 24))))
+    if rgba is not None and expected_text and region.startswith("band_"):
+        # 逐字模板比对：缺字/错字的确定性判据（不依赖 tesseract 偶发整行失败）
+        tm = glyph_template(rgba, expected_text, top=(region == "band_top"),
+                            region=region, dev=float(d["ink_dev_thr"]))
+        metrics["template"] = {k: tm[k] for k in ("min_coverage", "min_precision",
+                                                  "ink_px")}
+        metrics["template_cells"] = tm["cells"]
+    if rgba is not None and expected_text and expected_bbox:
+        metrics["text_contrast"] = text_contrast(
+            rgba, expected_bbox, soft=float(d.get("ink_dev_soft", 12.0)))
     if expected_bbox and metrics.get("ink_bbox"):
+        bx0, by0, bx1, by1 = metrics["ink_bbox"]
         ew = max(float(expected_bbox[2]), 1.0)
+        eh = max(float(expected_bbox[3]), 1.0)
         metrics["expected_bbox"] = list(expected_bbox)
-        metrics["width_ratio"] = round(metrics["ink_bbox"][2] / ew, 3)
-        metrics["height_ratio"] = round(
-            metrics["ink_bbox"][3] / max(float(expected_bbox[3]), 1.0), 3)
+        metrics["width_ratio"] = round((bx1 - bx0) / ew, 3)
+        metrics["height_ratio"] = round((by1 - by0) / eh, 3)
 
     # 1) 墨迹越出圆盘 -> 位置越界/溢出
     if metrics.get("ink_circle_outside_frac", 0.0) > d["circle_outside_max"]:
@@ -321,29 +394,23 @@ def classify(ocr, cfg, expected_text="", region="scene", rgba=None, expected_bbo
     if metrics.get("width_ratio") is not None and \
             metrics["width_ratio"] < d["min_width_ratio"]:
         return "fail", "missing_glyph", metrics
-    # 4) 无命中
-    if not hits:
-        if expected_text:
-            if metrics.get("ink_px", 0) < int(d["min_ink_px"]):
-                # 完全没有硬墨迹：看软阈值下是否有淡墨迹 -> 对比度不足，否则真缺字
-                if metrics.get("ink_soft_px", 0) >= int(d["min_ink_px"]):
-                    return "fail", "low_contrast", metrics
-                return "fail", "missing_glyph", metrics
-            if metrics.get("rms", 255) < d["low_contrast_rms_min"] or weak:
-                return "fail", "low_contrast", metrics
-            return "fail", "missing_glyph", metrics
-        return "pass", None, metrics
-    # 4) 期望无字却检出 -> 干净底图被写进了字
-    if not expected_text:
+    # 4) 字框内前景/背景灰度差不足 -> 对比度不足（确定性像素度量）
+    if metrics.get("text_contrast") is not None and \
+            metrics["text_contrast"] < d["text_contrast_min"]:
+        return "fail", "low_contrast", metrics
+    # 5) 逐字模板：某字笔画缺失/被换成别的字形 -> 缺字 / 字形替代
+    if metrics.get("template_cells"):
+        for c in metrics["template_cells"]:
+            if c["coverage"] < d["glyph_cov_min"]:
+                if c["ink_px"] < int(d["glyph_ink_min"]):
+                    return "fail", "missing_glyph", metrics
+                return "fail", "glyph_substitution", metrics
+    # 6) 场景区域（期望无字）：OCR 读到有效词 -> 底图被画进字（该原因只上报，见 base_clean）
+    if hits and not expected_text:
         return "fail", "unexpected_text", metrics
-    # 5) 字符覆盖不足 + 检出的字有相当比例不属于期望文本 -> 字形替代（错字）
-    #    覆盖不足但没有"多余字符" -> 纯缺字。两者都是 recall<1，用 mismatch 区分。
-    recall_ok = metrics["char_recall"] >= d["pass_min_char_coverage"]
-    mismatch_bad = metrics["mismatch"] > d["substitution_max_char_mismatch"]
-    if mismatch_bad:
-        return "fail", "glyph_substitution", metrics
-    if not recall_ok:
-        return "fail", "missing_glyph", metrics
+    # 7) 色带：OCR 读字作为交叉校验，只记录不阻断。
+    #    实测 psm7 在合成 CJK 字上有整行读不出（3/6）与误读（3/6）的情况，
+    #    若把它当硬判据会把干净样本判失败，故 5 类硬原因全部由确定性度量给出。
     return "pass", None, metrics
 
 

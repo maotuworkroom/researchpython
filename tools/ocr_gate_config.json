@@ -1,5 +1,5 @@
 {
-  "config_version": "2026-11-03.6",
+  "config_version": "2026-11-03.7",
   "ocr": {
     "lang": "jpn+eng",
     "psm": 11,
@@ -31,14 +31,15 @@
   "decision": {
     "pass_min_char_coverage": 0.7,
     "substitution_max_char_mismatch": 0.2,
-    "low_contrast_rms_min": 18.0,
     "circle_outside_max": 0.15,
     "ink_outside_max": 0.1,
-    "min_ink_px": 200,
     "ink_dev_thr": 40.0,
     "ink_dev_soft": 12.0,
     "ink_margin_px": 24,
-    "min_width_ratio": 0.88
+    "min_width_ratio": 0.88,
+    "text_contrast_min": 30.0,
+    "glyph_cov_min": 0.55,
+    "glyph_ink_min": 200
   },
   "provenance": {
     "note": "阈值全部为写死常量；改动必须 bump config_version。色带用 psm 7（单行）+ 原尺度，避免 psm11 逐字丢字。",
@@ -87,6 +88,17 @@
     "chosen_base_clean": "len2_c60_h30_a20（同 FP 下召回最高）；fp<=1/20 未达标 -> 场景字检查降为 advisory（只上报不阻断）",
     "hard_gate": "band_top/band_bottom 嵌字完整性（5 类原因）",
     "scale_note": "0.35+denoise3 档召回崩塌（3/30），已废弃；最终 scale=0.5, denoise=0",
-    "band_crop_note": "band_crop_expand=0.15：色带 OCR 输入不裁满幅色带，而是按 pipeline.text_box 复算的期望字框外扩 15% 后裁切。满幅色带（宽>高 6 倍且两侧大片留白）会让 psm 7 整幅放弃识别（good_00/04/05 曾 hits=[]）。该值改动同样必须 bump config_version。"
+    "band_crop_note": "band_crop_expand=0.15：色带 OCR 输入不裁满幅色带，而是按 pipeline.text_box 复算的期望字框外扩 15% 后裁切。满幅色带（宽>高 6 倍且两侧大片留白）会让 psm 7 整幅放弃识别（good_00/04/05 曾 hits=[]）。该值改动同样必须 bump config_version。",
+    "reason_judge_order": "position_out_of_bounds(墨迹越圆) -> mask_eats_glyph(墨迹越色带) -> missing_glyph(墨迹宽度比<0.88) -> low_contrast(字框内灰度差<30) -> missing_glyph/glyph_substitution(逐字模板 coverage<0.55，按该字 ink_px<200 区分) -> pass。OCR 命中只上报（见 ocr_role）。",
+    "threshold_calibration": {
+      "run": "本机对 run 41635882366 的同一 36 例缺陷集（6 基准 + 5 类 × 6；渲染确定性，可逐项复算）测得；云端用 2026-11-03.7 复跑验证",
+      "width_ratio": "clean 0.960~0.984 / missing_glyph 0.616~0.730 -> 阈值 0.88",
+      "text_contrast": "clean 175~205 / low_contrast 17~22 -> 阈值 30",
+      "glyph_coverage": "clean 1.000 / glyph_substitution 0.332~0.352 / mask_eats 0.024~0.190 -> 阈值 0.55",
+      "glyph_ink_px": "glyph_substitution 9275 / 被吃掉字 808~2546 -> 阈值 200",
+      "circle_outside": "clean <=0.001 / position_out_of_bounds 0.221~0.286 -> 阈值 0.15",
+      "ink_outside": "clean <=0.001 / mask_eats_glyph 0.152~0.219 -> 阈值 0.1"
+    },
+    "ocr_role": "色带 OCR（psm 7）读出的文字作为交叉校验并上报（station_hits/brand_hits/char_recall），不作为硬判据：实测干净样本 6 例中 3 例整行读不出、3 例误读（如 苫->古），若当硬判据会把好样本判失败。5 类硬原因由确定性度量（几何/宽度/对比度/同字体逐字模板）给出。"
   }
 }

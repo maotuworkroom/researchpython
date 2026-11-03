@@ -112,6 +112,30 @@ def text_box(rgba, text, top):
     return [int(C - w / 2), int(y_mid - h / 2), int(w), int(h)]
 
 
+def text_mask(text, top):
+    """期望字的像素模板（同字体、同拟合、同落笔位置）+ 逐字框。
+
+    返回 (mask, cells)：mask=bool[SIZE,SIZE]，字迹为 True；cells=[[x,y,w,h], ...]
+    按字符 advance 切分，供门禁做逐字模板比对（缺字/错字定位）。
+    """
+    band_h = int(BAND * 2 * R)
+    y_mid = (C - R + band_h // 2) if top else (SIZE - (C - R) - band_h // 2)
+    dy = abs(C - y_mid)
+    chord = 2 * int(np.sqrt(max(R * R - dy * dy, 0)))
+    f = fit_font(text, int(chord * 0.78), int(band_h * 0.62),
+                 int(band_h * 0.40) if top else int(band_h * 0.66))
+    l, t, r, b = f.getbbox(text)
+    w, h = r - l, b - t
+    ox, oy = C - w / 2 - l, y_mid - h / 2 - t      # 与 emboss 的落笔点同式
+    img = Image.new("L", (SIZE, SIZE), 0)
+    ImageDraw.Draw(img).text((ox, oy), text, font=f, fill=255)
+    cells = []
+    for i, ch in enumerate(text):
+        cells.append([int(ox + f.getlength(text[:i])), int(y_mid - h / 2),
+                      max(1, int(f.getlength(ch))), int(h)])
+    return (np.array(img) > 127), cells
+
+
 def emboss(rgba, station, brand):
     img = Image.fromarray(rgba)
     d = ImageDraw.Draw(img)
