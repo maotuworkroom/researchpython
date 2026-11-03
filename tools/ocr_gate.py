@@ -37,9 +37,10 @@ DEFAULTS = {
     "lang": "jpn+eng",
     "psm": 11,
     "conf_thr": 60.0,
-    "upscale": 1,          # 1 或 2（放大 2x）
+    "scale": 1.0,          # <1 降采样 / 2 即"放大 2x"
     "binarize": None,      # None | "otsu" | "adaptive"
     "mask_out": True,      # 把场景掩膜外置白，减少干扰
+    "crop": True,          # 裁到场景 bbox 再 OCR（掩膜外本就无有效内容）
     "min_overlap": 0.5,    # 命中 bbox 与掩膜重叠比例阈值
 }
 
@@ -55,32 +56,56 @@ def scene_mask():
     return ins
 
 
-def prepare_gray(rgba, upscale=1, binarize=None, mask_out=True):
-    """RGBA -> 灰度预处理图（tesseract 输入）。纯数值，本地可复算。"""
+_INS = None
+_BBOX = None
+
+
+def _scene_bbox():
+    global _INS, _BBOX
+    if _BBOX is None:
+        ins = scene_mask()
+        ys, xs = np.where(ins)
+        _BBOX = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        _INS = ins
+    return _BBOX, _INS
+
+
+def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True):
+    """RGBA -> 灰度预处理图（tesseract 输入）。纯数值，本地可复算。
+    返回 (gray, x0, y0)：x0/y0 为裁切偏移（命中坐标还原用）。"""
     rgb = rgba[:, :, :3]
     alpha = rgba[:, :, 3]
     img = np.full((SIZE, SIZE, 3), 255, np.uint8)   # 透明处置白
     m = alpha > 127
     img[m] = rgb[m]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    ins = scene_mask()
+    (bx0, by0, bx1, by1), ins = _scene_bbox()
     if mask_out:
         gray[~ins] = 255
-    if upscale != 1:
-        gray = cv2.resize(gray, (SIZE * upscale, SIZE * upscale),
-                          interpolation=cv2.INTER_CUBIC)
+    if crop:
+        gray = gray[by0:by1, bx0:bx1]
+        ins_c = ins[by0:by1, bx0:bx1]
+    else:
+        ins_c, bx0, by0 = ins, 0, 0
+    if scale != 1.0:
+        h, w = gray.shape
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+        gray = cv2.resize(gray, (max(1, int(w * scale)), max(1, int(h * scale))),
+                          interpolation=interp)
     if binarize == "otsu":
         _, gray = cv2.threshold(gray, 0, 255,
                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         # 归一极性：掩膜内背景应为白（深色字）。若均值偏暗则整体取反。
-        mu = float(gray[ins].mean()) if upscale == 1 else float(
-            gray[np.kron(ins, np.ones((upscale, upscale), bool))].mean())
+        if scale != 1.0:
+            ins_c = cv2.resize(ins_c.astype(np.uint8), (gray.shape[1], gray.shape[0]),
+                               interpolation=cv2.INTER_NEAREST).astype(bool)
+        mu = float(gray[ins_c].mean()) if ins_c.any() else 255.0
         if mu < 127:
             gray = 255 - gray
     elif binarize == "adaptive":
         gray = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                      cv2.THRESH_BINARY, 51, 8)
-    return gray
+    return gray, bx0, by0
 
 
 def ocr_scene_text(rgba, **cfg):
@@ -90,15 +115,17 @@ def ocr_scene_text(rgba, **cfg):
     import time
     c = dict(DEFAULTS)
     c.update({k: v for k, v in cfg.items() if v is not None})
-    gray = prepare_gray(rgba, upscale=c["upscale"], binarize=c["binarize"],
-                        mask_out=c["mask_out"])
-    ins = scene_mask()
+    if "upscale" in cfg and cfg["upscale"]:  # 旧参数兼容
+        c["scale"] = float(cfg["upscale"])
+    gray, x0, y0 = prepare_gray(rgba, scale=c["scale"], binarize=c["binarize"],
+                                mask_out=c["mask_out"], crop=c["crop"])
+    _, ins = _scene_bbox()
     t0 = time.time()
     d = pytesseract.image_to_data(gray, lang=c["lang"],
                                   config=f"--psm {c['psm']}",
                                   output_type=pytesseract.Output.DICT)
     ocr_sec = time.time() - t0
-    sc = c["upscale"]
+    sc = c["scale"]
     hits = []
     for i, txt in enumerate(d["text"]):
         try:
@@ -109,15 +136,18 @@ def ocr_scene_text(rgba, **cfg):
         if not txt or conf < c["conf_thr"]:
             continue
         x, y, w, h = d["left"][i], d["top"][i], d["width"][i], d["height"][i]
-        x0, y0 = x // sc, y // sc
-        x1 = min(SIZE, (x + w + sc - 1) // sc)
-        y1 = min(SIZE, (y + h + sc - 1) // sc)
-        sub = ins[y0:y1, x0:x1]
+        # 还原到 2048 原图坐标
+        ox0 = int(x0 + x / sc)
+        oy0 = int(y0 + y / sc)
+        ox1 = min(SIZE, int(x0 + (x + w) / sc) + 1)
+        oy1 = min(SIZE, int(y0 + (y + h) / sc) + 1)
+        ox0, oy0 = max(0, ox0), max(0, oy0)
+        sub = ins[oy0:oy1, ox0:ox1]
         if sub.size == 0:
             continue
         if float(sub.mean()) >= c["min_overlap"]:
             hits.append({"text": txt, "conf": round(conf, 1),
-                         "bbox": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)]})
+                         "bbox": [ox0, oy0, ox1 - ox0, oy1 - oy0]})
     return {"n_hits": len(hits), "hits": hits, "pass": len(hits) == 0,
             "config": {k: c[k] for k in DEFAULTS}, "ocr_sec": round(ocr_sec, 2)}
 

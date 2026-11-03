@@ -13,8 +13,9 @@
   images   指定输入文件名列表, 默认取 bench/inputs 全部
   target_sat  color-norm 目标饱和度百分比, 默认 60
   mode     stamp-ocr-gate: "tune"（预处理网格调参）或 "regress"（30 站回归）
-  configs  tune 用：门禁配置列表（缺省为 5 组预处理网格, psm=11/lang=jpn+eng/conf>=60）
-  gate     regress 用：选定的门禁配置, 缺省 {"binarize":null,"upscale":1}
+  configs  tune 用：门禁配置列表（缺省为裁切+缩放/二值化网格, psm=11/lang=jpn+eng/conf>=60）
+  limit    tune 用：>0 时每类对照只取前 N 例（快速探测）
+  gate     regress 用：选定的门禁配置, 缺省 {"scale":0.5,"binarize":"otsu"}
   n_stations  regress 站数, 默认 30
 
 产物: out/summary.json（机器信息+吞吐+逐 job 报告）、out/sample_*.png（1 张视觉验证图）
@@ -145,13 +146,14 @@ def _job_colornorm(job):
 
 # ---------------- stamp-ocr-gate（tesseract 文字门禁） ----------------
 
-# tune 缺省网格：psm=11 / lang=jpn+eng / conf>=60 固定，只变预处理
+# tune 缺省网格：psm=11 / lang=jpn+eng / conf>=60 固定，变预处理（裁切+缩放/二值化）
+# 注：全幅 2048 灰度直跑在本 runner 上病态慢（>140s/图），故默认先裁场景 bbox
+# 并降采样；"放大 2x"（scale=2）作为可选档保留。
 DEFAULT_TUNE_GRID = [
-    {"name": "gray"},
-    {"name": "gray2x", "upscale": 2},
-    {"name": "otsu", "binarize": "otsu"},
-    {"name": "otsu2x", "binarize": "otsu", "upscale": 2},
-    {"name": "adp", "binarize": "adaptive"},
+    {"name": "c05gray", "scale": 0.5},
+    {"name": "c05otsu", "scale": 0.5, "binarize": "otsu"},
+    {"name": "c10otsu", "scale": 1.0, "binarize": "otsu"},
+    {"name": "c05adp", "scale": 0.5, "binarize": "adaptive"},
 ]
 
 NOTO_FONT_PATHS = [
@@ -231,11 +233,18 @@ def run_ocr_tune(params, out_dir, scratch):
                         "build_sec": round(cases_sec, 1)},
               "fixed": {"psm": 11, "lang": "jpn+eng", "conf_thr": 60},
               "configs": []}
+    limit = int(params.get("limit", 0))  # >0: 每类取前 N 例（快速探测用）
+    if limit > 0:
+        pos_sel = mani["positives"][::max(1, len(mani["positives"]) // limit)][:limit]
+        neg_sel = mani["negatives"][::max(1, len(mani["negatives"]) // limit)][:limit]
+        report["limit"] = {"positives": len(pos_sel), "negatives": len(neg_sel)}
+    else:
+        pos_sel, neg_sel = mani["positives"], mani["negatives"]
     t0 = time.time()
     for cfg in configs:
         gate_cfg = {k: v for k, v in cfg.items() if k != "name"}
         jobs = [(os.path.join(cases_dir, e["file"]), e["truth"], e["file"], gate_cfg)
-                for e in mani["positives"] + mani["negatives"]]
+                for e in pos_sel + neg_sel]
         if workers > 1:
             with mp.Pool(workers) as pool:
                 results = pool.map(_job_ocr_eval, jobs)
@@ -342,7 +351,7 @@ def run_ocr_regress(params, out_dir, scratch):
     """n 站回归：8 张原图轮换 + 站名分布取样，四道门禁 + 新旧文字门禁对照。"""
     workers = max(1, int(params.get("workers", 4)))
     n = max(1, int(params.get("n_stations", 30)))
-    gate_cfg = params.get("gate") or {"binarize": None, "upscale": 1}
+    gate_cfg = params.get("gate") or {"scale": 0.5, "binarize": "otsu"}
     stations = json.load(open(os.path.join(ROOT, "bench", "stations_cn.json")))
     picks = [stations[i] for i in range(0, len(stations), len(stations) // n)][:n]
     inputs_dir = os.path.join(ROOT, "bench", "inputs")
