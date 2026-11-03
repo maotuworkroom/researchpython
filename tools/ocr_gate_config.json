@@ -1,5 +1,5 @@
 {
-  "config_version": "2026-11-03.2",
+  "config_version": "2026-11-03.4",
   "ocr": {
     "lang": "jpn+eng",
     "psm": 11,
@@ -10,8 +10,8 @@
   },
   "preprocess": {
     "crop_to_scene": true,
-    "scale": 0.35,
-    "denoise": 3,
+    "scale": 0.5,
+    "denoise": 0,
     "binarize": null,
     "mask_out_scene": true,
     "band_scale": 0.5,
@@ -20,11 +20,11 @@
     "min_overlap": 0.5
   },
   "base_clean": {
-    "min_word_conf": 75,
-    "min_word_len": 3,
+    "min_word_conf": 60,
+    "min_word_len": 2,
     "min_glyph_h_px": 30,
-    "min_width_frac": 0.04,
-    "min_aspect": 0.0
+    "min_width_frac": 0.0,
+    "min_aspect": 2.0
   },
   "decision": {
     "pass_min_char_coverage": 0.95,
@@ -38,10 +38,10 @@
     "ink_margin_px": 24
   },
   "provenance": {
-    "note": "阈值全部为写死常量；改动必须 bump config_version。base_clean 三值由云端 tune 曲线定标后回填。",
+    "note": "阈值全部为写死常量；改动必须 bump config_version。预处理 scale=0.5/denoise=0 由 tune 41629502455 定档（0.35 召回崩塌）。",
     "tesseract": "5.5.0",
     "lang": "jpn+eng",
-    "calibration_run": "tune 41624566175 (待回填)",
+    "calibration_run": "41629502455 (tune, scale=0.5/denoise=0, 30 正例 + 20 负例)",
     "failure_reasons": [
       "missing_glyph",
       "glyph_substitution",
@@ -54,6 +54,35 @@
       "scene": "圆内去掉上下 15% 色带 —— 底图无字门禁",
       "band_top": "上色带 —— 品牌名嵌字",
       "band_bottom": "下色带 —— 站名嵌字"
-    }
+    },
+    "calibration_curves": {
+      "raw_conf60": {
+        "recall": "17/30",
+        "fp": "12/20"
+      },
+      "len2_c60_h40_a25": {
+        "recall": "4/30",
+        "fp": "3/20"
+      },
+      "len2_c70_h40_a25": {
+        "recall": "3/30",
+        "fp": "3/20"
+      },
+      "len2_c60_h30_a20": {
+        "recall": "7/30",
+        "fp": "3/20"
+      },
+      "len3_c60": {
+        "recall": "9/30",
+        "fp": "8/20"
+      },
+      "len3_c80_h40": {
+        "recall": "6/30",
+        "fp": "5/20"
+      }
+    },
+    "chosen_base_clean": "len2_c60_h30_a20（同 FP 下召回最高）；fp<=1/20 未达标 -> 场景字检查降为 advisory（只上报不阻断）",
+    "hard_gate": "band_top/band_bottom 嵌字完整性（5 类原因）",
+    "scale_note": "0.35+denoise3 档召回崩塌（3/30），已废弃；最终 scale=0.5, denoise=0"
   }
 }
