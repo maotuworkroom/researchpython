@@ -68,24 +68,35 @@ def flatten_bands(rgba):
     return rgba
 
 
+_FONT_CACHE = {}
+
+
 def pick_font(size):
+    if size in _FONT_CACHE:
+        return _FONT_CACHE[size]
     for path, idx in FONT_CANDIDATES:
         try:
-            return ImageFont.truetype(path, size, index=idx)
+            f = ImageFont.truetype(path, size, index=idx)
+            _FONT_CACHE[size] = f
+            return f
         except Exception:
             continue
     raise RuntimeError("no CJK font")
 
 
 def fit_font(text, max_w, max_h, start):
-    size = start
-    while size > 12:
-        f = pick_font(size)
+    """二分可用最大字号（逐档 load 大 TTC 在 Linux runner 上很慢，见 _FONT_CACHE）。"""
+    lo, hi, best = 12, start, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        f = pick_font(mid)
         l, t, r, b = f.getbbox(text)
         if (r - l) <= max_w and (b - t) <= max_h:
-            return f
-        size -= 4
-    return pick_font(12)
+            best = f
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best or pick_font(12)
 
 
 def emboss(rgba, station, brand):

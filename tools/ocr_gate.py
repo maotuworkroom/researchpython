@@ -49,32 +49,62 @@ DEFAULTS = {
 }
 
 
-def scene_mask():
-    """圆内、去掉上下 15% 色带后的场景区域（与 gate_lib.scene_mask 同口径）。"""
+REGIONS = ("scene", "band_top", "band_bottom")
+
+
+def band_top_y():
+    return C - R + int(BAND * 2 * R)
+
+
+def band_bottom_y():
+    return SIZE - band_top_y()
+
+
+def region_mask(region="scene"):
+    """区域掩膜（三种口径，全部在 R-8 圆内）：
+      scene       中段（去掉上下 15% 色带）——底图无字门禁
+      band_top    上色带（品牌名嵌在这里）
+      band_bottom 下色带（站名嵌在这里）
+    """
+    if region not in REGIONS:
+        raise ValueError(f"region 必须是 {REGIONS}")
     ys, xs = np.mgrid[0:SIZE, 0:SIZE]
     ins = (xs - C) ** 2 + (ys - C) ** 2 <= (R - 8) ** 2
-    band_top = C - R + int(BAND * 2 * R)
-    band_bot = SIZE - band_top
-    ins[:band_top] = False
-    ins[band_bot:] = False
+    bt, bb = band_top_y(), band_bottom_y()
+    if region == "scene":
+        ins[:bt] = False
+        ins[bb:] = False
+    elif region == "band_top":
+        ins[bt:] = False
+    else:
+        ins[:bb] = False
     return ins
 
 
-_INS = None
-_BBOX = None
+def scene_mask():
+    """兼容旧调用：场景区域（同 region_mask('scene')）。"""
+    return region_mask("scene")
+
+
+_REGION_CACHE = {}
+
+
+def region_geom(region="scene"):
+    """(bbox, mask) 按区域缓存。bbox=(x0,y0,x1,y1) 右开。"""
+    if region not in _REGION_CACHE:
+        ins = region_mask(region)
+        ys, xs = np.where(ins)
+        _REGION_CACHE[region] = (
+            (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1), ins)
+    return _REGION_CACHE[region]
 
 
 def _scene_bbox():
-    global _INS, _BBOX
-    if _BBOX is None:
-        ins = scene_mask()
-        ys, xs = np.where(ins)
-        _BBOX = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
-        _INS = ins
-    return _BBOX, _INS
+    return region_geom("scene")
 
 
-def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True, denoise=0):
+def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
+                 denoise=0, region="scene"):
     """RGBA -> 灰度预处理图（tesseract 输入）。纯数值，本地可复算。
     返回 (gray, x0, y0)：x0/y0 为裁切偏移（命中坐标还原用）。"""
     rgb = rgba[:, :, :3]
@@ -83,7 +113,7 @@ def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True, denoi
     m = alpha > 127
     img[m] = rgb[m]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    (bx0, by0, bx1, by1), ins = _scene_bbox()
+    (bx0, by0, bx1, by1), ins = region_geom(region)
     if mask_out:
         gray[~ins] = 255
     if crop:
@@ -114,8 +144,32 @@ def prepare_gray(rgba, scale=1.0, binarize=None, mask_out=True, crop=True, denoi
     return gray, bx0, by0
 
 
-def ocr_scene_text(rgba, **cfg):
-    """OCR 文字门禁。返回 {n_hits, hits[], pass, config, ocr_sec}。"""
+def prep_fingerprint(rgba, scale=1.0, binarize=None, mask_out=True, crop=True,
+                     denoise=0, region="scene"):
+    """OCR 输入图的指纹（shape/crop/mean/std/otsu/sha1）。本机与云端共用同一函数，
+    用于证明"喂给 tesseract 的是同一张图"（本机无 tesseract 时的逐项一致性依据）。"""
+    gray, x0, y0 = prepare_gray(rgba, scale=scale, binarize=binarize, mask_out=mask_out,
+                                crop=crop, denoise=denoise, region=region)
+    thr, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return {"shape": list(gray.shape), "crop_xy": [int(x0), int(y0)],
+            "mean": round(float(gray.mean()), 2), "std": round(float(gray.std()), 2),
+            "otsu_thr": round(float(thr), 1),
+            "prep_sha1": hashlib.sha1(gray.tobytes()).hexdigest()[:16]}
+
+
+def geom_report():
+    """区域几何常量（确定性，供本机/云端逐项比对）。"""
+    return {"band_top_y": band_top_y(), "band_bottom_y": band_bottom_y(),
+            "scene_bbox": list(region_geom("scene")[0]),
+            "band_top_bbox": list(region_geom("band_top")[0]),
+            "band_bottom_bbox": list(region_geom("band_bottom")[0])}
+
+
+def ocr_scene_text(rgba, region="scene", **cfg):
+    """OCR 文字门禁。返回 {n_hits, hits[], pass, config, ocr_sec}。
+
+    region: scene（底图无字门禁）/ band_top（品牌名）/ band_bottom（站名）。
+    """
     if not HAVE_TESS:
         raise RuntimeError("pytesseract 不可用（本机不装，云端 runner 才有）")
     import time
@@ -125,8 +179,8 @@ def ocr_scene_text(rgba, **cfg):
         c["scale"] = float(cfg["upscale"])
     gray, x0, y0 = prepare_gray(rgba, scale=c["scale"], binarize=c["binarize"],
                                 mask_out=c["mask_out"], crop=c["crop"],
-                                denoise=c.get("denoise", 0))
-    _, ins = _scene_bbox()
+                                denoise=c.get("denoise", 0), region=region)
+    _, ins = region_geom(region)
     prep_sha1 = hashlib.sha1(gray.tobytes()).hexdigest()[:16]
     t0 = time.time()
     d = pytesseract.image_to_data(gray, lang=c["lang"],

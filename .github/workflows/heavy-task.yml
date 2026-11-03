@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "任务类型: stamp-pipeline=印章全流程(门禁/归一/嵌字/复检), color-norm=色彩归一批量, stamp-ocr-gate=tesseract OCR 文字门禁(tune/regress)"
+        description: "任务类型: stamp-pipeline=印章全流程(门禁/归一/嵌字/复检), color-norm=色彩归一批量, stamp-ocr-gate=tesseract OCR 文字门禁(mode=tune|regress|defects)"
         required: true
         type: choice
         options:
@@ -31,7 +31,7 @@ jobs:
     # 8 核：把下面换成你账号可用的 larger runner 标签（如 linux-8-core）；
     # 标准 ubuntu-latest 为 4 vCPU（2025 年后规格），倍率按 1x 计。
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +53,14 @@ jobs:
           python -c "import cv2, numpy; print('cv2', cv2.__version__, 'numpy', numpy.__version__)"
           tesseract --version 2>&1 | head -1 || echo "tesseract missing"
           tesseract --list-langs 2>&1 | tail -5 || true
+
+      - name: Verify deps (fail fast, 不静默跳过)
+        run: |
+          tesseract --version 2>&1 | head -1
+          tesseract --list-langs 2>&1 | grep -qx jpn || { echo "::error::tesseract-ocr-jpn 缺失"; exit 1; }
+          test -n "$(ls /usr/share/fonts/opentype/noto/NotoSansCJK*.ttc 2>/dev/null)" \
+            || { echo "::error::Noto CJK 字体缺失"; exit 1; }
+          python -c "import cv2,numpy,PIL,pytesseract,fontTools; print('py deps ok')"
 
       - name: Run task
         env:

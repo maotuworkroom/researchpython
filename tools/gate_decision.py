@@ -2,16 +2,17 @@
 # -*- coding: utf-8 -*-
 """印章文字门禁判定层：OCR 结果 -> 通过/失败 + 可定位的失败原因。
 
-失败原因分类（5 类，命名写死）：
-  missing_glyph          缺字：场景里没检出达标文字的字符覆盖不足
-  glyph_substitution     字形替代：检出了文字，但与期望文本字符相似度低
-  position_out_of_bounds 位置越界/溢出：命中框落在场景掩膜外（含色带/圆外）
-  low_contrast           对比度不足：该区域笔画-背景的 RMS 对比度低于阈值
-  mask_eats_glyph        遮罩吃掉字形：期望区域内的墨迹像素多数落在掩膜外
-另有 unexpected_text：期望无字但检出了字（干净底图被写进字）。
+两道门禁、共 6 类原因（命名写死，写进结果与计数）：
+  missing_glyph          缺字    期望有字，区域里墨迹/字符覆盖不足
+  glyph_substitution     字形替代 检出文字，但与期望文本字符不匹配（错字）
+  position_out_of_bounds 位置越界 墨迹/命中越出圆形边界（溢出）
+  low_contrast           对比度不足 有淡墨迹但 RMS/置信度不足，OCR 读不出
+  mask_eats_glyph        遮罩吃掉字形 墨迹跨出色带边界，被门禁掩膜裁掉
+  unexpected_text        期望无字却检出字（AI 底图场景被画进了文字）
 
-阈值全部来自 ocr_gate_config.json，不在代码里散落。判定不可静默跳过：
-evaluate() 必定返回 verdict∈{pass,fail}；异常路径由调用方记 error，不允许 return None。
+阈值全部来自 ocr_gate_config.json（decision / base_clean 两段），代码里不散落魔数；
+每次判定都带 config_version + config_sha256 留痕。判定不可静默跳过：evaluate()
+必定返回 verdict∈{pass,fail}，异常由调用方记 error。
 """
 import hashlib
 import json
@@ -32,7 +33,7 @@ REASONS = ("missing_glyph", "glyph_substitution", "position_out_of_bounds",
 
 
 def load_config(path=None):
-    """读配置并附上 sha256 指纹（留痕：每次判定都带上 config_version + 指纹）。"""
+    """读配置并附 sha256 指纹（留痕：每次判定都带 config_version + 指纹）。"""
     path = path or CFG_PATH
     raw = open(path, "rb").read()
     cfg = json.loads(raw.decode("utf-8"))
@@ -42,9 +43,10 @@ def load_config(path=None):
                       ("decision", ("pass_min_char_coverage",
                                     "substitution_max_char_mismatch",
                                     "low_contrast_rms_min",
-                                    "band_overlap_max",
                                     "circle_outside_max",
-                                    "out_of_bounds_inside_min"))):
+                                    "ink_outside_max",
+                                    "min_ink_px",
+                                    "ink_dev_thr"))):
         miss = [k for k in keys if k not in cfg.get(sec, {})]
         if miss:
             raise ValueError(f"配置缺字段 {sec}.{miss}")
@@ -53,15 +55,18 @@ def load_config(path=None):
     return cfg
 
 
-def ocr_cfg_from(cfg):
-    """配置 -> ocr_gate.ocr_scene_text 的关键字参数。"""
+def ocr_cfg_from(cfg, region="scene"):
+    """配置 -> ocr_gate.ocr_scene_text 的关键字参数（色带按 band_* 覆盖）。"""
     o, p = cfg["ocr"], cfg["preprocess"]
+    band = region.startswith("band_")
     return {"lang": o["lang"], "psm": o["psm"], "oem": o.get("oem", 1),
             "extra": o.get("extra", ""), "conf_thr": float(o["conf_hit"]),
             "conf_weak": float(o.get("conf_weak", 35)),
-            "scale": float(p["scale"]), "binarize": p["binarize"],
-            "denoise": int(p.get("denoise", 0)),
-            "mask_out": bool(p["mask_out_scene"]),
+            "scale": float(p.get("band_scale", p["scale"]) if band else p["scale"]),
+            "binarize": p["binarize"],
+            "denoise": int(p.get("band_denoise", 0) if band else p.get("denoise", 0)),
+            "mask_out": bool(p.get("band_mask_out", p["mask_out_scene"])
+                             if band else p["mask_out_scene"]),
             "crop": bool(p["crop_to_scene"]),
             "min_overlap": float(p["min_overlap"])}
 
@@ -110,57 +115,94 @@ def gray_full(rgba):
     return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
 
-def region_metrics(rgba, bbox, ink_dev_thr):
-    """bbox 区域的对比度与"墨迹被遮罩吃掉"比例。bbox=(x0,y0,x1,y1)。"""
-    _, ins = OG._scene_bbox()
-    gray = gray_full(rgba)
-    x0, y0, x1, y1 = [int(v) for v in bbox]
+_CIRC = None
+
+
+def circle_mask():
+    """(R-8) 圆盘掩膜（缓存）。"""
+    global _CIRC
+    if _CIRC is None:
+        ys, xs = np.mgrid[0:OG.SIZE, 0:OG.SIZE]
+        _CIRC = (xs - OG.C) ** 2 + (ys - OG.C) ** 2 <= (OG.R - 8) ** 2
+    return _CIRC
+
+
+def _clip(b):
+    x0, y0, x1, y1 = [int(v) for v in b]
     x0, y0 = max(0, x0), max(0, y0)
     x1, y1 = min(OG.SIZE, x1), min(OG.SIZE, y1)
-    g = gray[y0:y1, x0:x1]
-    m = ins[y0:y1, x0:x1]
-    if g.size == 0 or not m.any():
-        return {"rms": 0.0, "ink_px": 0, "ink_outside_frac": 0.0, "region_px": 0}
-    rms = float(g.std())
-    med = float(np.median(g))
-    ink = np.abs(g.astype(np.int16) - med) > ink_dev_thr
-    ink_px = int(ink.sum())
-    out = int((ink & ~m).sum())
-    return {"rms": round(rms, 1), "ink_px": ink_px,
-            "ink_outside_frac": round(out / ink_px, 3) if ink_px else 0.0,
-            "region_px": int(g.size)}
+    return x0, y0, x1, y1
 
 
-def _hits_bbox(hits):
-    xs0 = min(h["bbox"][0] for h in hits)
-    ys0 = min(h["bbox"][1] for h in hits)
-    xs1 = max(h["bbox"][0] + h["bbox"][2] for h in hits)
-    ys1 = max(h["bbox"][1] + h["bbox"][3] for h in hits)
-    return (xs0, ys0, xs1, ys1)
-
-
-def rect_geometry(bbox):
-    """字形矩形相对"场景掩膜"的解析几何（不依赖 OCR，纯坐标判定）。
-
-    返回:
-      band_frac   矩形落在上下 15% 色带内的像素比例 -> 遮罩吃掉字形
-      outside_frac 矩形落在圆外的像素比例        -> 位置越界/溢出
-    """
-    _, ins = OG._scene_bbox()
-    x0, y0, x1, y1 = [int(v) for v in bbox]
-    x0, y0 = max(0, x0), max(0, y0)
-    x1, y1 = min(OG.SIZE, x1), min(OG.SIZE, y1)
+def rect_geometry(bbox, region="scene"):
+    """字形矩形相对"圆盘"与"区域掩膜"的解析几何（纯坐标，不依赖 OCR）。"""
+    x0, y0, x1, y1 = _clip(bbox)
     if x1 <= x0 or y1 <= y0:
-        return {"band_frac": 1.0, "outside_frac": 1.0, "rect_px": 0}
-    band_top = OG.C - OG.R + int(OG.BAND * 2 * OG.R)
-    band_bot = OG.SIZE - band_top
-    ys, xs = np.mgrid[y0:y1, x0:x1]
-    in_circle = (xs - OG.C) ** 2 + (ys - OG.C) ** 2 <= (OG.R - 8) ** 2
-    in_band = (ys < band_top) | (ys >= band_bot)
-    px = int(in_circle.size)
-    return {"band_frac": round(float((in_band & in_circle).sum()) / px, 3),
-            "outside_frac": round(float((~in_circle).sum()) / px, 3),
+        return {"circle_outside_frac": 1.0, "region_outside_frac": 1.0, "rect_px": 0}
+    circ = circle_mask()[y0:y1, x0:x1]
+    reg = OG.region_geom(region)[1][y0:y1, x0:x1]
+    px = int(circ.size)
+    return {"circle_outside_frac": round(float((~circ).sum()) / px, 3),
+            "region_outside_frac": round(float((~reg & circ).sum()) / px, 3),
             "rect_px": px}
+
+
+def ink_metrics(rgba, region="band_bottom", region_bbox=None, ink_dev_thr=40.0,
+                ink_dev_soft=12.0, margin=24, min_comp_px=8):
+    """色带墨迹度量（判"遮罩吃掉字形 / 位置越界 / 对比度不足"）。
+
+    做法：以区域内灰度中位数为背景色，在"色带 + 朝场景一侧外扩 margin 像素"的窗口里取
+    墨迹连通域，只保留"与区域本身有交叠"的连通域（照片纹理不与色带文字连通 -> 被剔除）。
+    返回:
+      rms                 区域内灰度标准差（对比度）
+      ink_px / ink_soft_px 硬/软阈值下的墨迹像素数（软阈值用于识别"淡到读不出"）
+      ink_region_outside_frac 墨迹落在区域外（色带外）的比例 -> 遮罩吃掉字形
+      ink_circle_outside_frac 墨迹落在圆外的比例           -> 位置越界
+      ink_bbox            墨迹包围盒（原图坐标）
+      window              统计窗口
+    """
+    gray = gray_full(rgba)
+    reg = OG.region_geom(region)[1]
+    circ = circle_mask()
+    box = _clip(region_bbox or OG.region_geom(region)[0])
+    wx0, wy0, wx1, wy1 = box
+    if region == "band_top":
+        wy1 = min(OG.SIZE, wy1 + margin)
+    elif region == "band_bottom":
+        wy0 = max(0, wy0 - margin)
+    rms = float(gray[reg].std()) if reg.any() else 0.0
+    med = float(np.median(gray[reg])) if reg.any() else 255.0
+    g = gray[wy0:wy1, wx0:wx1]
+    hard = (np.abs(g.astype(np.int16) - med) > ink_dev_thr)
+    soft = (np.abs(g.astype(np.int16) - med) > ink_dev_soft)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(hard.astype(np.uint8), 8)
+    reg_sub = reg[wy0:wy1, wx0:wx1]
+    circ_sub = circ[wy0:wy1, wx0:wx1]
+    keep = np.zeros(n, bool)
+    if n > 1 and reg_sub.any():
+        ids = np.unique(labels[reg_sub])
+        for i in ids:
+            if i and stats[i][4] >= min_comp_px:
+                keep[i] = True
+    kept = keep[labels] if n > 1 else np.zeros_like(reg_sub)
+    ink_px = int(kept.sum())
+    out_region = int((kept & ~reg_sub).sum())
+    out_circle = int((kept & ~circ_sub).sum())
+    soft_px = int((soft & reg_sub).sum())
+    bbox = None
+    if ink_px:
+        ys, xs = np.where(kept)
+        bbox = (int(wx0 + xs.min()), int(wy0 + ys.min()),
+                int(wx0 + xs.max()) + 1, int(wy0 + ys.max()) + 1)
+    geo = rect_geometry(bbox, region) if bbox else {"circle_outside_frac": 0.0,
+                                                   "region_outside_frac": 0.0,
+                                                   "rect_px": 0}
+    return {"rms": round(rms, 1), "ink_px": ink_px, "ink_soft_px": soft_px,
+            "ink_region_outside_frac": round(out_region / ink_px, 3) if ink_px else 0.0,
+            "ink_circle_outside_frac": round(out_circle / ink_px, 3) if ink_px else 0.0,
+            "ink_bbox": list(bbox) if bbox else None,
+            "ink_bbox_geometry": geo,
+            "window": [wx0, wy0, wx1, wy1]}
 
 
 _WORD_RE = re.compile(r"^[0-9A-Za-z\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]+$")
@@ -203,14 +245,15 @@ def base_clean_verdict(hits, f):
     return "pass", None, []
 
 
-def classify(ocr, cfg, expected_text="", expected_bbox=None, rgba=None):
-    """纯判定：输入 ocr 结果 + 配置 + 期望文本/区域，输出 verdict/reason/metrics。"""
+def classify(ocr, cfg, expected_text="", region="scene", rgba=None):
+    """纯判定：OCR 结果 + 配置 + 期望文本/区域 -> verdict/reason/metrics。"""
     d = cfg["decision"]
     hits, weak = ocr["hits"], ocr.get("weak", [])
     joined = "".join(h["text"] for h in hits)
     recall = char_coverage(expected_text, joined) if expected_text else 1.0
     precision = char_coverage(joined, expected_text) if expected_text else 1.0
     metrics = {
+        "region": region,
         "n_hits": len(hits), "n_weak": len(weak),
         "char_recall": round(recall, 3),
         "char_precision": round(precision, 3),
@@ -220,22 +263,26 @@ def classify(ocr, cfg, expected_text="", expected_bbox=None, rgba=None):
         "max_inside_frac": round(max((h["inside_frac"] for h in hits), default=1.0), 3),
         "prep_sha1": ocr.get("prep_sha1"),
     }
-    if expected_bbox:
-        metrics.update(rect_geometry(expected_bbox))
-    if rgba is not None:
-        probe = expected_bbox or (_hits_bbox(hits) if hits else None)
-        if probe:
-            metrics.update(region_metrics(rgba, probe, d["ink_dev_thr"]))
+    if rgba is not None and expected_text:
+        metrics.update(ink_metrics(
+            rgba, region, ink_dev_thr=float(d["ink_dev_thr"]),
+            ink_dev_soft=float(d.get("ink_dev_soft", 12.0)),
+            margin=int(d.get("ink_margin_px", 24))))
 
-    # 1) 字形矩形越出圆外 -> 位置越界/溢出
-    if metrics.get("outside_frac", 0) > d["circle_outside_max"]:
+    # 1) 墨迹越出圆盘 -> 位置越界/溢出
+    if metrics.get("ink_circle_outside_frac", 0.0) > d["circle_outside_max"]:
         return "fail", "position_out_of_bounds", metrics
-    # 2) 字形矩形压进上下色带 -> 遮罩吃掉字形
-    if metrics.get("band_frac", 0) > d["band_overlap_max"]:
+    # 2) 墨迹跨出色带边界（被门禁掩膜裁掉）-> 遮罩吃掉字形
+    if metrics.get("ink_region_outside_frac", 0.0) > d["ink_outside_max"]:
         return "fail", "mask_eats_glyph", metrics
     # 3) 无命中
     if not hits:
         if expected_text:
+            if metrics.get("ink_px", 0) < int(d["min_ink_px"]):
+                # 完全没有硬墨迹：看软阈值下是否有淡墨迹 -> 对比度不足，否则真缺字
+                if metrics.get("ink_soft_px", 0) >= int(d["min_ink_px"]):
+                    return "fail", "low_contrast", metrics
+                return "fail", "missing_glyph", metrics
             if metrics.get("rms", 255) < d["low_contrast_rms_min"] or weak:
                 return "fail", "low_contrast", metrics
             return "fail", "missing_glyph", metrics
@@ -243,21 +290,22 @@ def classify(ocr, cfg, expected_text="", expected_bbox=None, rgba=None):
     # 4) 期望无字却检出 -> 干净底图被写进了字
     if not expected_text:
         return "fail", "unexpected_text", metrics
-    # 5) 字符召回不足 -> 缺字；召回够但检出的字大多不是期望字 -> 字形替代
-    if metrics["char_recall"] < d["pass_min_char_coverage"]:
-        return "fail", "missing_glyph", metrics
-    if metrics["mismatch"] > d["substitution_max_char_mismatch"]:
+    # 5) 字符覆盖不足 + 检出的字有相当比例不属于期望文本 -> 字形替代（错字）
+    #    覆盖不足但没有"多余字符" -> 纯缺字。两者都是 recall<1，用 mismatch 区分。
+    recall_ok = metrics["char_recall"] >= d["pass_min_char_coverage"]
+    mismatch_bad = metrics["mismatch"] > d["substitution_max_char_mismatch"]
+    if mismatch_bad:
         return "fail", "glyph_substitution", metrics
-    if metrics["max_inside_frac"] < d["out_of_bounds_inside_min"]:
-        return "fail", "position_out_of_bounds", metrics
+    if not recall_ok:
+        return "fail", "missing_glyph", metrics
     return "pass", None, metrics
 
 
-# region_metrics 需要 rgba 作上下文，由 evaluate 显式传入
-def evaluate(rgba, cfg, expected_text="", expected_bbox=None, ocr_result=None):
+def evaluate(rgba, cfg, expected_text="", region="scene", ocr_result=None):
     """端到端：跑 OCR + 分类。返回 {verdict, reason, metrics, ocr_sec, config_version}。"""
-    ocr = ocr_result or OG.ocr_scene_text(rgba, **ocr_cfg_from(cfg))
-    verdict, reason, metrics = classify(ocr, cfg, expected_text, expected_bbox, rgba)
+    ocr = ocr_result or OG.ocr_scene_text(rgba, region=region,
+                                          **ocr_cfg_from(cfg, region))
+    verdict, reason, metrics = classify(ocr, cfg, expected_text, region, rgba)
     return {"verdict": verdict, "reason": reason,
             "metrics": metrics, "ocr_sec": ocr["ocr_sec"],
             "hits": ocr["hits"][:8],
@@ -267,16 +315,16 @@ def evaluate(rgba, cfg, expected_text="", expected_bbox=None, ocr_result=None):
 
 def main():
     from PIL import Image
+    usage = "用法: python3 gate_decision.py IMG.png [期望文本] [--region band_bottom]"
     if len(sys.argv) < 2:
-        sys.exit("用法: python3 gate_decision.py IMG.png [期望文本] [--no-ocr]")
+        sys.exit(usage)
     rgba = np.array(Image.open(sys.argv[1]).convert("RGBA"))
     expected = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else ""
+    region = "scene"
+    if "--region" in sys.argv:
+        region = sys.argv[sys.argv.index("--region") + 1]
     cfg = load_config()
-    if "--no-ocr" in sys.argv:      # 只复算几何/对比度，不碰 tesseract
-        out = {"metrics": region_metrics(rgba, OG._scene_bbox()[0], 40.0),
-               "config_version": cfg["config_version"], "config_sha256": cfg["_sha256"]}
-    else:
-        out = evaluate(rgba, cfg, expected)
+    out = evaluate(rgba, cfg, expected, region)
     print(json.dumps(out, ensure_ascii=False, indent=1))
 
 

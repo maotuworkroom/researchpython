@@ -1,5 +1,5 @@
 {
-  "config_version": "2026-11-03.1",
+  "config_version": "2026-11-03.2",
   "ocr": {
     "lang": "jpn+eng",
     "psm": 11,
@@ -14,27 +14,45 @@
     "denoise": 3,
     "binarize": null,
     "mask_out_scene": true,
+    "band_scale": 0.5,
+    "band_denoise": 0,
+    "band_mask_out": true,
     "min_overlap": 0.5
   },
   "base_clean": {
     "min_word_conf": 75,
     "min_word_len": 3,
-    "min_glyph_h_px": 0,
-    "min_width_frac": 0.0
+    "min_glyph_h_px": 30,
+    "min_width_frac": 0.04
   },
   "decision": {
-    "pass_min_char_coverage": 0.6,
-    "substitution_max_char_mismatch": 0.5,
+    "pass_min_char_coverage": 0.95,
+    "substitution_max_char_mismatch": 0.2,
     "low_contrast_rms_min": 18.0,
-    "band_overlap_max": 0.15,
     "circle_outside_max": 0.15,
-    "out_of_bounds_inside_min": 0.7,
-    "ink_dev_thr": 40.0
+    "ink_outside_max": 0.1,
+    "min_ink_px": 200,
+    "ink_dev_thr": 40.0,
+    "ink_dev_soft": 12.0,
+    "ink_margin_px": 24
   },
   "provenance": {
-    "psm_source": "任务规格写死: -l jpn+eng --psm 11, conf>=60",
-    "threshold_source": "阈值均在本文件写死; 改动须 bump config_version 并重跑 tune",
-    "calibration": "positive_cases 30 例(鲜/暗/半透明/小字号/旋转) + negatives 20 例",
-    "runtime": "ubuntu-latest runner, apt tesseract-ocr + tesseract-ocr-jpn"
+    "note": "阈值全部为写死常量；改动必须 bump config_version。base_clean 三值由云端 tune 曲线定标后回填。",
+    "tesseract": "5.5.0",
+    "lang": "jpn+eng",
+    "calibration_run": "tune 41624566175 (待回填)",
+    "failure_reasons": [
+      "missing_glyph",
+      "glyph_substitution",
+      "position_out_of_bounds",
+      "low_contrast",
+      "mask_eats_glyph",
+      "unexpected_text"
+    ],
+    "regions": {
+      "scene": "圆内去掉上下 15% 色带 —— 底图无字门禁",
+      "band_top": "上色带 —— 品牌名嵌字",
+      "band_bottom": "下色带 —— 站名嵌字"
+    }
   }
 }
