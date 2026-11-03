@@ -637,13 +637,14 @@ def run_ocr_defects(params, out_dir, scratch):
     by_defect = {}
     for r in results:
         key = r["expected"] or "clean"
+        want = "pass" if key == "clean" else key      # 基准样本的期望结论是 pass
         b = by_defect.setdefault(key, {"n": 0, "correct": 0, "reasons": {}, "cases": []})
         got = (r["result"] or {}).get("reason") if r["result"] else None
         got = got or ("pass" if r["result"] and r["result"]["verdict"] == "pass" else "error")
         b["n"] += 1
-        b["correct"] += 1 if got == key else 0
+        b["correct"] += 1 if got == want else 0
         b["reasons"][got] = b["reasons"].get(got, 0) + 1
-        b["cases"].append({"file": r["file"], "expected": key, "got": got,
+        b["cases"].append({"file": r["file"], "expected": want, "got": got,
                            "hits": (r["result"] or {}).get("hits"),
                            "metrics": (r["result"] or {}).get("metrics"),
                            "prep_sha1": (r["result"] or {}).get("prep_sha1"),
