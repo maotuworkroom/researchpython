@@ -255,9 +255,9 @@ def run_ocr_tune(params, out_dir, scratch):
             "ocr_sec_sum": round(sum(r["ocr_sec"] or 0 for r in results), 1),
             "errors": [r["error"] for r in results if r["error"]][:5],
         })
-    report["wall_sec"] = round(time.time() - t0, 1)
-    with open(os.path.join(out_dir, "tune_report.json"), "w") as f:
-        json.dump(report, f, ensure_ascii=False, indent=1)
+        report["wall_sec"] = round(time.time() - t0, 1)
+        with open(os.path.join(out_dir, "tune_report.json"), "w") as f:
+            json.dump(report, f, ensure_ascii=False, indent=1)  # 逐组落盘防超时丢失
     # 样图：1 正 1 负，供人工抽查
     for src, dst in ((os.path.join(cases_dir, mani["positives"][0]["file"]),
                       os.path.join(out_dir, "sample_positive.png")),
