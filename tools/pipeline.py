@@ -99,6 +99,19 @@ def fit_font(text, max_w, max_h, start):
     return best or pick_font(12)
 
 
+def text_box(rgba, text, top):
+    """嵌字"应有"的墨迹包围盒 [x,y,w,h]（同字体、同拟合规则复算，供门禁判缺字）。"""
+    band_h = int(BAND * 2 * R)
+    y_mid = (C - R + band_h // 2) if top else (SIZE - (C - R) - band_h // 2)
+    dy = abs(C - y_mid)
+    chord = 2 * int(np.sqrt(max(R * R - dy * dy, 0)))
+    f = fit_font(text, int(chord * 0.78), int(band_h * 0.62),
+                 int(band_h * 0.40) if top else int(band_h * 0.66))
+    l, t, r, b = f.getbbox(text)
+    w, h = r - l, b - t
+    return [int(C - w / 2), int(y_mid - h / 2), int(w), int(h)]
+
+
 def emboss(rgba, station, brand):
     img = Image.fromarray(rgba)
     d = ImageDraw.Draw(img)

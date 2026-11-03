@@ -1,5 +1,5 @@
 {
-  "config_version": "2026-11-03.4",
+  "config_version": "2026-11-03.5",
   "ocr": {
     "lang": "jpn+eng",
     "psm": 11,
@@ -14,10 +14,11 @@
     "denoise": 0,
     "binarize": null,
     "mask_out_scene": true,
-    "band_scale": 0.5,
+    "band_scale": 1.0,
     "band_denoise": 0,
     "band_mask_out": true,
-    "min_overlap": 0.5
+    "min_overlap": 0.5,
+    "band_psm": 7
   },
   "base_clean": {
     "min_word_conf": 60,
@@ -27,7 +28,7 @@
     "min_aspect": 2.0
   },
   "decision": {
-    "pass_min_char_coverage": 0.95,
+    "pass_min_char_coverage": 0.7,
     "substitution_max_char_mismatch": 0.2,
     "low_contrast_rms_min": 18.0,
     "circle_outside_max": 0.15,
@@ -35,10 +36,11 @@
     "min_ink_px": 200,
     "ink_dev_thr": 40.0,
     "ink_dev_soft": 12.0,
-    "ink_margin_px": 24
+    "ink_margin_px": 24,
+    "min_width_ratio": 0.88
   },
   "provenance": {
-    "note": "阈值全部为写死常量；改动必须 bump config_version。预处理 scale=0.5/denoise=0 由 tune 41629502455 定档（0.35 召回崩塌）。",
+    "note": "阈值全部为写死常量；改动必须 bump config_version。色带用 psm 7（单行）+ 原尺度，避免 psm11 逐字丢字。",
     "tesseract": "5.5.0",
     "lang": "jpn+eng",
     "calibration_run": "41629502455 (tune, scale=0.5/denoise=0, 30 正例 + 20 负例)",

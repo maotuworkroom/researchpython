@@ -59,7 +59,8 @@ def ocr_cfg_from(cfg, region="scene"):
     """配置 -> ocr_gate.ocr_scene_text 的关键字参数（色带按 band_* 覆盖）。"""
     o, p = cfg["ocr"], cfg["preprocess"]
     band = region.startswith("band_")
-    return {"lang": o["lang"], "psm": o["psm"], "oem": o.get("oem", 1),
+    return {"lang": o["lang"], "psm": int(p.get("band_psm", o["psm"]) if band else o["psm"]),
+            "oem": o.get("oem", 1),
             "extra": o.get("extra", ""), "conf_thr": float(o["conf_hit"]),
             "conf_weak": float(o.get("conf_weak", 35)),
             "scale": float(p.get("band_scale", p["scale"]) if band else p["scale"]),
@@ -263,8 +264,12 @@ def base_clean_verdict(hits, f):
     return "pass", None, []
 
 
-def classify(ocr, cfg, expected_text="", region="scene", rgba=None):
-    """纯判定：OCR 结果 + 配置 + 期望文本/区域 -> verdict/reason/metrics。"""
+def classify(ocr, cfg, expected_text="", region="scene", rgba=None, expected_bbox=None):
+    """纯判定：OCR 结果 + 配置 + 期望文本/区域 -> verdict/reason/metrics。
+
+    expected_bbox: 嵌字"应有"的墨迹包围盒 [x,y,w,h]（pipeline.text_box 复算）。
+    给了它就能用"墨迹宽度比"判缺字，不依赖 OCR 的逐字召回（tesseract 偶发丢字）。
+    """
     d = cfg["decision"]
     hits, weak = ocr["hits"], ocr.get("weak", [])
     joined = "".join(h["text"] for h in hits)
@@ -286,6 +291,12 @@ def classify(ocr, cfg, expected_text="", region="scene", rgba=None):
             rgba, region, ink_dev_thr=float(d["ink_dev_thr"]),
             ink_dev_soft=float(d.get("ink_dev_soft", 12.0)),
             margin=int(d.get("ink_margin_px", 24))))
+    if expected_bbox and metrics.get("ink_bbox"):
+        ew = max(float(expected_bbox[2]), 1.0)
+        metrics["expected_bbox"] = list(expected_bbox)
+        metrics["width_ratio"] = round(metrics["ink_bbox"][2] / ew, 3)
+        metrics["height_ratio"] = round(
+            metrics["ink_bbox"][3] / max(float(expected_bbox[3]), 1.0), 3)
 
     # 1) 墨迹越出圆盘 -> 位置越界/溢出
     if metrics.get("ink_circle_outside_frac", 0.0) > d["circle_outside_max"]:
@@ -293,7 +304,11 @@ def classify(ocr, cfg, expected_text="", region="scene", rgba=None):
     # 2) 墨迹跨出色带边界（被门禁掩膜裁掉）-> 遮罩吃掉字形
     if metrics.get("ink_region_outside_frac", 0.0) > d["ink_outside_max"]:
         return "fail", "mask_eats_glyph", metrics
-    # 3) 无命中
+    # 3) 墨迹宽度明显短于应有宽度 -> 缺字（几何判据，先于任何字符级判据）
+    if metrics.get("width_ratio") is not None and \
+            metrics["width_ratio"] < d["min_width_ratio"]:
+        return "fail", "missing_glyph", metrics
+    # 4) 无命中
     if not hits:
         if expected_text:
             if metrics.get("ink_px", 0) < int(d["min_ink_px"]):

@@ -418,12 +418,16 @@ def _job_ocr_regress(job):
         rep["timings"]["emboss"] = round(time.time() - t, 2)
         bt = P.band_text_check(final)
         t = time.time()
+        exp_bottom = P.text_box(rgba, station_name, False)
+        exp_top = P.text_box(rgba, "JR", True)
         ocr_final = OG.ocr_scene_text(final, region="band_bottom",
                                       **GD.ocr_cfg_from(cfg, "band_bottom"))
-        vf, rf, mf = GD.classify(ocr_final, cfg, station_name, "band_bottom", final)
+        vf, rf, mf = GD.classify(ocr_final, cfg, station_name, "band_bottom", final,
+                                 expected_bbox=exp_bottom)
         ocr_brand = OG.ocr_scene_text(final, region="band_top",
                                       **GD.ocr_cfg_from(cfg, "band_top"))
-        vbrand, rbrand, mbrand = GD.classify(ocr_brand, cfg, "JR", "band_top", final)
+        vbrand, rbrand, mbrand = GD.classify(ocr_brand, cfg, "JR", "band_top", final,
+                                            expected_bbox=exp_top)
         rep["timings"]["text_gate_band"] = round(time.time() - t, 2)
         # 嵌字只动色带，场景区域应与底图逐字节一致（字体无关的一致性证据）
         rep["prep_final_scene"] = OG.prep_fingerprint(final, region="scene",
@@ -570,7 +574,10 @@ def _job_defect(job):
         bcfg = GD.ocr_cfg_from(cfg, "band_bottom")
         bcfg.update({k: v for k, v in (gate_cfg or {}).items() if v is not None})
         ocr = OG.ocr_scene_text(rgba, region="band_bottom", **bcfg)
-        v, r, m = GD.classify(ocr, cfg, station, "band_bottom", rgba)
+        import pipeline as P
+        exp_box = P.text_box(rgba, station, False)
+        v, r, m = GD.classify(ocr, cfg, station, "band_bottom", rgba,
+                              expected_bbox=exp_box)
         res = {"verdict": v, "reason": r,
                "hits": [h["text"] for h in ocr["hits"][:6]],
                "metrics": {k: m.get(k) for k in
